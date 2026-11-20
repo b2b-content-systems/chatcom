@@ -1,0 +1,14 @@
+{
+ "en": {"q": ["Who’s","actually","booking?","LOL","Installments?","Is","anyone","awake?","New","chat","name?","Seen","by","three."],
+        "s": ["Your","favorite","show."],
+        "end1": "Turn your group chat into<br>your favorite TV series.", "end2": "a free Claude skill by Bryan Bartlett", "sub": ""},
+ "es": {"q": ["¿Quién","de verdad","reserva?","JAJAJA","¿A plazos?","¿Alguien","sigue","despierto?","¿Nuevo","nombre","del grupo?","Visto","por","tres."],
+        "s": ["Tu","serie","favorita."],
+        "end1": "Convierte el chat de tu grupo<br>en tu serie favorita.", "end2": "una skill gratis de Claude, de Bryan Bartlett", "sub": "Ay, criatura inocente."},
+ "pt": {"q": ["Quem","vai mesmo","reservar?","KKKKK","Parcelado?","Alguém","ainda","acordado?","Novo","nome","do grupo?","Visto","por","três."],
+        "s": ["Sua","série","favorita."],
+        "end1": "Transforme o chat do seu grupo<br>na sua série favorita.", "end2": "uma skill grátis do Claude, por Bryan Bartlett", "sub": "Ah, doce inocente."},
+ "fr": {"q": ["Qui","réserve","vraiment ?","MDR","En plusieurs fois ?","Quelqu’un","est","réveillé ?","Nouveau","nom","du groupe ?","Vu","par","trois."],
+        "s": ["Ta","série","préférée."],
+        "end1": "Transforme ton chat de groupe<br>en ta série préférée.", "end2": "une skill Claude gratuite, par Bryan Bartlett", "sub": "Oh, pauvre innocent."}
+}

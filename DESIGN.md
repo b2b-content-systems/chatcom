@@ -78,7 +78,7 @@ components:
     textColor: "{colors.text-muted}"
 ---
 
-> **2026-11-20: the marketing site now uses the bryanbartlett.com "One frame" system** (Bryan: "align the branding better to bbcom"). Source of truth for the site: `~/.openclaw/workspace/projects/ai-portfolio/DESIGN.md` (navy #0F1B2D, house yellow #F2C400, plate #F5F6F8, Bricolage Grotesque wdth 85 + Instrument Sans, yellow sticker button, windows for things that play, yellow end card, nothing under 16px). "The House" below is kept for the in-episode art and title cards only.
+> **2026-11-20: the marketing site now uses the bryanbartlett.com "One frame" system** (Bryan: "align the branding better to bbcom"). Source of truth for the site: the bryanbartlett.com repo's DESIGN.md (navy #0F1B2D, house yellow #F2C400, plate #F5F6F8, Bricolage Grotesque wdth 85 + Instrument Sans, yellow sticker button, windows for things that play, yellow end card, nothing under 16px). "The House" below is kept for the in-episode art and title cards only.
 
 
 # CHATCOM — The House

@@ -52,6 +52,10 @@ chatcom new <export>         create a show from a WhatsApp export and cast it
 chatcom episode <show>       make this week's episode
 ```
 
+## Share it
+
+The trailer in every format (9:16, 1:1, 16:9) and four languages, posts ready to paste, alt text, images and a "Made with CHATCOM" badge: **[the share kit](https://b2b-content-systems.github.io/chatcom/share/)**. Please credit: *CHATCOM, a free Claude skill by Bryan Bartlett*.
+
 ## Your chat stays yours
 
 CHATCOM runs on your own computer with your own API keys. Before the first model call it prints exactly what goes where: in skill mode, chat text goes to the model your Claude Code session uses, and reference photos and image prompts go to Google (Gemini). There is no CHATCOM server.

@@ -1,0 +1,30 @@
+{
+ "en": {
+  "linkedin": "I built a free Claude skill that turns your group chat into your favorite TV series.\n\nDrop in the chat. CHATCOM casts your friends from how they actually text, writes the week into an episode, and makes it in the style you pick: sitcom, anime, 80s cartoon, true crime.\n\nWhy I built it: the best writing most of us will see this week is already in a group chat. The planner. The one who answers everything with \"LOL\". The friend who has been \"tentative\" since October. That is a cast. It just never had a show.\n\nIt runs as a Claude Code skill on your own computer, with your own keys. Open source, MIT.\n\nTrailer and a full sample episode: https://b2b-content-systems.github.io/chatcom/\nVersion 0.1 is in development. Star the repo to get it first.\n\nWhat would your group chat's show be called?",
+  "x": "I made a free Claude skill that turns your group chat into your favorite TV series 📺\n\nSitcom, anime, 80s cartoon, true crime. Same chat, any show.\n\nTrailer ↓\nhttps://b2b-content-systems.github.io/chatcom/",
+  "thread": "1/ I made a free Claude skill that turns your group chat into your favorite TV series 📺\n\n2/ Export the chat → pick your show → watch it together. Your friends get cast from how they actually text.\n\n3/ It remembers every running joke, so episode nine can call back to episode two.\n\n4/ Open source, runs on your own machine. v0.1 is in development. Star it to get it first: https://github.com/b2b-content-systems/chatcom",
+  "reels": "POV: your group chat finally got its own TV show 📺\nWhich show would yours be? 👇\n\nFree Claude skill, link in bio.\n#groupchat #ClaudeAI #AIvideo #animation #sitcom",
+  "reddit_title": "I'm building a Claude Code skill that turns a group chat export into a TV episode (trailer + full sample episode)",
+  "reddit": "CHATCOM is a Claude skill: drop in a WhatsApp group chat export, pick a show style (sitcom, anime, 80s cartoon, true crime), and get back an episode starring the people in the chat. It keeps a show bible, so running jokes carry from week to week.\n\nTrailer and a full sample episode (fictional chat): https://b2b-content-systems.github.io/chatcom/\nRepo (MIT): https://github.com/b2b-content-systems/chatcom\n\nv0.1 is in development. It runs locally with your own keys and prints what goes where before any model call. Feedback on the format is very welcome.",
+  "challenge": "Reply with your group chat's name 👇\nI'll tell you what TV show it is.\n\n(Then I'll turn one into an episode with CHATCOM, my free Claude skill.)",
+  "alt": "Trailer for CHATCOM. Fast cuts of animated friends in different styles (3D, anime, 80s airbrush) react to group chat messages like \"Who's actually booking?\" and \"New chat name?\". It ends on the line: Turn your group chat into your favorite TV series."
+ },
+ "es": {
+  "x": "Hice una skill gratis de Claude que convierte el chat de tu grupo en tu serie favorita 📺\n\nSitcom, anime, dibujos de los 80, true crime. El mismo chat, cualquier serie.\n\nTráiler ↓\nhttps://b2b-content-systems.github.io/chatcom/",
+  "reels": "POV: tu grupo de WhatsApp por fin tiene su propia serie 📺\n¿Qué serie sería la tuya? 👇\n\nSkill gratis de Claude, enlace en la bio.\n#grupodewhatsapp #ClaudeAI #IA #animacion",
+  "challenge": "Responde con el nombre de tu grupo 👇\nTe digo qué serie de TV es.\n\n(Y convierto uno en episodio con CHATCOM, mi skill gratis de Claude.)",
+  "alt": "Tráiler de CHATCOM. Cortes rápidos de amigos animados en distintos estilos reaccionan a mensajes del grupo como \"¿Quién de verdad reserva?\". Termina con: Convierte el chat de tu grupo en tu serie favorita."
+ },
+ "pt": {
+  "x": "Fiz uma skill grátis do Claude que transforma o chat do seu grupo na sua série favorita 📺\n\nSitcom, anime, desenho dos anos 80, true crime. O mesmo chat, qualquer série.\n\nTrailer ↓\nhttps://b2b-content-systems.github.io/chatcom/",
+  "reels": "POV: o grupo dos amigos finalmente virou série 📺\nQual seria a série do seu grupo? 👇\n\nSkill grátis do Claude, link na bio.\n#grupodozap #ClaudeAI #IA #animacao",
+  "challenge": "Responde com o nome do seu grupo 👇\nEu digo qual série de TV ele é.\n\n(E transformo um em episódio com o CHATCOM, minha skill grátis do Claude.)",
+  "alt": "Trailer do CHATCOM. Cortes rápidos de amigos animados em vários estilos reagem a mensagens do grupo como \"Quem vai mesmo reservar?\". Termina com: Transforme o chat do seu grupo na sua série favorita."
+ },
+ "fr": {
+  "x": "J’ai fait une skill Claude gratuite qui transforme ton chat de groupe en ta série préférée 📺\n\nSitcom, anime, dessin animé des années 80, true crime. Le même chat, n’importe quelle série.\n\nBande-annonce ↓\nhttps://b2b-content-systems.github.io/chatcom/",
+  "reels": "POV : ton groupe d’amis a enfin sa propre série 📺\nCe serait quelle série, la tienne ? 👇\n\nSkill Claude gratuite, lien en bio.\n#groupedepotes #ClaudeAI #IA #animation",
+  "challenge": "Réponds avec le nom de ton groupe 👇\nJe te dis quelle série télé c’est.\n\n(Et j’en transforme un en épisode avec CHATCOM, ma skill Claude gratuite.)",
+  "alt": "Bande-annonce de CHATCOM. Des amis animés dans différents styles réagissent à des messages de groupe comme « Qui réserve vraiment ? ». Fin : Transforme ton chat de groupe en ta série préférée."
+ }
+}
