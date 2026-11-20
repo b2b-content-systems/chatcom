@@ -1,0 +1,10 @@
+{
+  "name": "chatcom",
+  "version": "0.1.0-dev",
+  "description": "Turn your group chat into your favorite TV series: an episode starring your friends, in the style of the show you love.",
+  "author": { "name": "Bryan Bartlett", "url": "https://bryanbartlett.com" },
+  "homepage": "https://b2b-content-systems.github.io/chatcom/",
+  "repository": "https://github.com/b2b-content-systems/chatcom",
+  "license": "MIT",
+  "keywords": ["group chat", "tv series", "sitcom", "animation", "whatsapp", "video"]
+}

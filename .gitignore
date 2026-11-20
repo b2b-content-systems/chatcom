@@ -1,0 +1,8 @@
+# Public repo: the product, the site and the README art. Production files stay local.
+marketing/*
+!marketing/site/
+.gstack/
+PLAN.md
+TODOS.md
+.DS_Store
+*.part
