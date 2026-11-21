@@ -40,6 +40,7 @@ section{padding:clamp(56px,7vw,96px) 0;border-bottom:1px solid var(--line)}
 .win-bar span:first-child{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .dots{display:flex;gap:6px;flex:none}.dots i{width:11px;height:11px;border:2px solid var(--navy)}.dots i:last-child{background:var(--yellow)}
 .win video,.win img{display:block;width:100%;background:var(--navy)}
+#gifgrid img{height:auto;aspect-ratio:1/1}
 .v916 video{aspect-ratio:9/16;object-fit:cover}.v11 video{aspect-ratio:1/1;object-fit:cover}.v169 video{aspect-ratio:16/9;object-fit:cover}
 .meta{padding:14px 16px;display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;font-size:16px;color:var(--dim)}
 .dl{font:700 16px/1 var(--body);background:var(--yellow);color:var(--navy);border:2px solid var(--navy);box-shadow:3px 3px 0 var(--navy);padding:9px 12px;text-decoration:none;white-space:nowrap}
@@ -64,7 +65,7 @@ footer a{color:#fff;text-decoration:underline;text-decoration-color:var(--yellow
 </style>
 </head>
 <body>
-<header class="top"><div class="wrap"><a class="wm" href="../">CHATCOM</a><nav aria-label="Share kit"><a href="#videos">Videos</a><a href="#posts">Posts</a><a href="#images">Images</a><a href="#badge">Badge</a></nav></div></header>
+<header class="top"><div class="wrap"><a class="wm" href="../">CHATCOM</a><nav aria-label="Share kit"><a href="#videos">Videos</a><a href="#posts">Posts</a><a href="#gifs">GIFs</a><a href="#images">Images</a><a href="../show/">Your show</a><a href="#badge">Badge</a></nav></div></header>
 
 <main>
 <section class="hero">
@@ -105,6 +106,14 @@ footer a{color:#fff;text-decoration:underline;text-decoration-color:var(--yellow
   </div>
 </section>
 
+<section id="gifs">
+  <div class="wrap">
+    <h2>Reaction GIFs for your group chat.</h2>
+    <p class="intro">Thirteen loops from the sample episodes, for the moments every chat has. Download a GIF (or the smaller WebP) and send it.</p>
+    <div class="grid g4" id="gifgrid"></div>
+  </div>
+</section>
+
 <section id="images">
   <div class="wrap">
     <h2>Images.</h2>
@@ -139,7 +148,7 @@ footer a{color:#fff;text-decoration:underline;text-decoration-color:var(--yellow
 
 <script>
 (async () => {
-  const LABELS = {linkedin:'LinkedIn', x:'X / Threads / Bluesky', thread:'X thread', reels:'Reels / TikTok / Shorts caption', reddit_title:'Reddit title (r/ClaudeAI)', reddit:'Reddit post', challenge:'Engagement post', alt:'Alt text for the video'};
+  const LABELS = {linkedin:'LinkedIn', x:'X / Threads / Bluesky', thread:'X thread', reels:'Reels / TikTok / Shorts caption', reddit_title:'Reddit title (r/ClaudeAI)', reddit:'Reddit post', challenge:'Engagement post', alt:'Alt text for the video', show:'Show generator post'};
   let P = {};
   try { P = await (await fetch('posts.json')).json(); } catch (e) { document.getElementById('postgrid').textContent = 'The posts did not load. Refresh the page.'; console.error(e); return; }
   const grid = document.getElementById('postgrid'), tabs = [...document.querySelectorAll('.tabs button')];
@@ -162,6 +171,18 @@ footer a{color:#fff;text-decoration:underline;text-decoration-color:var(--yellow
   tabs.forEach(t => t.addEventListener('click', () => show(t.dataset.lang)));
   document.querySelectorAll('[data-copy]').forEach(b => b.addEventListener('click', () => copy(document.getElementById(b.dataset.copy).textContent, b)));
   show('en');
+  try {
+    const G = await (await fetch('gifs/gifs.json')).json(), gg = document.getElementById('gifgrid');
+    G.forEach(g => {
+      const f = document.createElement('figure'); f.className = 'win';
+      f.innerHTML = `<div class="win-bar"><span></span><span class="dots"><i></i><i></i><i></i></span></div><img loading="lazy" width="480" height="480"><figcaption class="meta"><span></span><span style="display:flex;gap:8px"><a class="dl" download>GIF</a><a class="dl" download>WebP</a></span></figcaption>`;
+      f.querySelector('.win-bar span').textContent = g.caption;
+      const img = f.querySelector('img'); img.src = g.gif; img.alt = g.alt;
+      f.querySelector('.meta>span').textContent = g.look;
+      const [a, b] = f.querySelectorAll('a'); a.href = g.gif; b.href = g.webp;
+      gg.appendChild(f);
+    });
+  } catch (e) { document.getElementById('gifgrid').textContent = 'The GIFs did not load. Refresh the page.'; console.error(e); }
 })();
 </script>
 </body>

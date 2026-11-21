@@ -1,0 +1,212 @@
+[
+ {
+  "id": "lol",
+  "caption": "LOL",
+  "look": "3D",
+  "alt": "A curly-haired guy laughs at his phone. Caption: LOL",
+  "seconds": 3.25,
+  "gif": "gifs/lol.gif",
+  "webp": "gifs/lol.webp",
+  "tags": [
+   "chatcom",
+   "group chat",
+   "reaction"
+  ]
+ },
+ {
+  "id": "seen-by-three",
+  "caption": "Seen by three. I can SEE you.",
+  "look": "3D",
+  "alt": "A woman glares into her phone. Caption: Seen by three. I can SEE you.",
+  "seconds": 2.8,
+  "gif": "gifs/seen-by-three.gif",
+  "webp": "gifs/seen-by-three.webp",
+  "tags": [
+   "chatcom",
+   "group chat",
+   "reaction",
+   "seen",
+   "three"
+  ]
+ },
+ {
+  "id": "not-an-answer",
+  "caption": "That is not an answer.",
+  "look": "3D",
+  "alt": "A woman looks flatly at her phone. Caption: That is not an answer.",
+  "seconds": 2.95,
+  "gif": "gifs/not-an-answer.gif",
+  "webp": "gifs/not-an-answer.webp",
+  "tags": [
+   "chatcom",
+   "group chat",
+   "reaction",
+   "that",
+   "answer"
+  ]
+ },
+ {
+  "id": "forty-one-dollars",
+  "caption": "I have $41.",
+  "look": "3D",
+  "alt": "A woman holds her phone up, deadpan. Caption: I have $41.",
+  "seconds": 2.3,
+  "gif": "gifs/forty-one-dollars.gif",
+  "webp": "gifs/forty-one-dollars.webp",
+  "tags": [
+   "chatcom",
+   "group chat",
+   "reaction",
+   "have"
+  ]
+ },
+ {
+  "id": "new-chat-name",
+  "caption": "Okay but more importantly. New chat name.",
+  "look": "3D",
+  "alt": "A guy sits up, inspired. Caption: Okay but more importantly. New chat name.",
+  "seconds": 4.85,
+  "gif": "gifs/new-chat-name.gif",
+  "webp": "gifs/new-chat-name.webp",
+  "tags": [
+   "chatcom",
+   "group chat",
+   "reaction",
+   "okay",
+   "more",
+   "importantly",
+   "chat"
+  ]
+ },
+ {
+  "id": "zero-flights",
+  "caption": "47 messages. Zero flights.",
+  "look": "3D",
+  "alt": "A woman sits very still. Caption: 47 messages. Zero flights.",
+  "seconds": 3.75,
+  "gif": "gifs/zero-flights.gif",
+  "webp": "gifs/zero-flights.webp",
+  "tags": [
+   "chatcom",
+   "group chat",
+   "reaction",
+   "messages",
+   "zero",
+   "flights"
+  ]
+ },
+ {
+  "id": "fine",
+  "caption": "Fine.",
+  "look": "3D",
+  "alt": "A woman, very still, says: Fine.",
+  "seconds": 1.6,
+  "gif": "gifs/fine.gif",
+  "webp": "gifs/fine.webp",
+  "tags": [
+   "chatcom",
+   "group chat",
+   "reaction",
+   "fine"
+  ]
+ },
+ {
+  "id": "not-how-flights-work",
+  "caption": "That's not how flights work, Ryan.",
+  "look": "City-Pop",
+  "alt": "A woman, flat. Caption: That's not how flights work, Ryan.",
+  "seconds": 3.2,
+  "gif": "gifs/not-how-flights-work.gif",
+  "webp": "gifs/not-how-flights-work.webp",
+  "tags": [
+   "chatcom",
+   "group chat",
+   "reaction",
+   "thats",
+   "flights",
+   "work",
+   "ryan"
+  ]
+ },
+ {
+  "id": "just-me",
+  "caption": "Just me.",
+  "look": "City-Pop",
+  "alt": "A woman sips coffee, satisfied. Caption: Just me.",
+  "seconds": 5.05,
+  "gif": "gifs/just-me.gif",
+  "webp": "gifs/just-me.webp",
+  "tags": [
+   "chatcom",
+   "group chat",
+   "reaction",
+   "just"
+  ]
+ },
+ {
+  "id": "seen-by-cole",
+  "caption": "Seen by Cole",
+  "look": "City-Pop",
+  "alt": "A guy on a beanbag opens a payment request, gasps and shuts the app. Caption: Seen by Cole",
+  "seconds": 5.0,
+  "gif": "gifs/seen-by-cole.gif",
+  "webp": "gifs/seen-by-cole.webp",
+  "tags": [
+   "chatcom",
+   "group chat",
+   "reaction",
+   "seen",
+   "cole"
+  ]
+ },
+ {
+  "id": "no-updates",
+  "caption": "No updates to share at this time.",
+  "look": "80s Airbrush",
+  "alt": "A tired community manager smiles. Caption: No updates to share at this time.",
+  "seconds": 3.95,
+  "gif": "gifs/no-updates.gif",
+  "webp": "gifs/no-updates.webp",
+  "tags": [
+   "chatcom",
+   "group chat",
+   "reaction",
+   "updates",
+   "share",
+   "this",
+   "time"
+  ]
+ },
+ {
+  "id": "its-live",
+  "caption": "IT'S LIVE",
+  "look": "80s Airbrush",
+  "alt": "A guy at three monitors shouts. Caption: IT'S LIVE",
+  "seconds": 1.95,
+  "gif": "gifs/its-live.gif",
+  "webp": "gifs/its-live.webp",
+  "tags": [
+   "chatcom",
+   "group chat",
+   "reaction",
+   "live"
+  ]
+ },
+ {
+  "id": "sweet-summer-child",
+  "caption": "Oh, sweet summer child.",
+  "look": "80s Airbrush",
+  "alt": "A woman in front of a wall of sneaker boxes, deadpan. Caption: Oh, sweet summer child.",
+  "seconds": 3.1,
+  "gif": "gifs/sweet-summer-child.gif",
+  "webp": "gifs/sweet-summer-child.webp",
+  "tags": [
+   "chatcom",
+   "group chat",
+   "reaction",
+   "sweet",
+   "summer",
+   "child"
+  ]
+ }
+]
