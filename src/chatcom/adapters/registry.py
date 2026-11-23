@@ -162,12 +162,13 @@ def load(exports: list[str] | str, ctx: Context, source: str | None = None) -> t
 
 
 def _register_builtin() -> None:
-    from chatcom.adapters import transcript, whatsapp
+    from chatcom.adapters import telegram, transcript, whatsapp
     register(Adapter("whatsapp", {"container": whatsapp.matches_container, "text": whatsapp.matches_text},
                      whatsapp.load))
     # The header tier is checked first in sniff(); a transcript has no other matcher.
     register(Adapter("transcript", {}, transcript.load))
-    for name in ("screenshots", "telegram"):
+    register(Adapter("telegram", {"container": telegram.matches_container}, telegram.load))
+    for name in ("screenshots",):
         if name not in ADAPTERS:
             register(Adapter(name, {}, _not_built, later=True))
 
