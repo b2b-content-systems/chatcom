@@ -303,3 +303,25 @@ def test_reaction_senders_round_trip(who):
                                     {"emoji": "😂", "sender": who, "count": 3}])
     back = T.parse(T.write([m], TZ), TZ, key=UNKEYED).messages[0]
     assert back["text"] == "x" and back["reactions"] == m["reactions"]
+
+
+# Value: protects=no phone number reaches the model through a name, a quote sender or a reaction; fails_when=a
+# name skips mask_numbers or a long number reads as a count; why_new=PR 2 adversarial review; seam=none;
+# no_claim=numbers the masking module itself does not recognise
+def test_phone_numbers_inside_names_are_masked():
+    res = parse("# speakers: Mike 555-010-2233, Dave\n"
+                "> my cell is 555 010 2233: call me\n"
+                "Dave: hi (reactions: 👍 my cell 555 010 2233, 😂 5550102233)\n"
+                "Mike 555-010-2233: yo\n")
+    blob = json.dumps(res.messages)
+    assert "2233" not in blob and "0102233" not in blob
+    q = res.messages[0]["quote"]
+    assert q["sender"] is None and "Unnamed" in q["text"]  # not a speaker, so quoted text, masked
+    assert all(r["sender"] and "Unnamed" in r["sender"] for r in res.messages[0]["reactions"])
+    assert res.messages[1]["sender"].startswith("Mike Unnamed")
+
+
+def test_a_quote_from_someone_not_speaking_round_trips():
+    m = _msg(0, "A", "reply", quote={"sender": "Gone Guy", "text": "earlier"})
+    back = T.parse(T.write([m], TZ), TZ, key=UNKEYED).messages[0]
+    assert back["quote"] == m["quote"]

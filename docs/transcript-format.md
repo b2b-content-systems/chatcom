@@ -52,7 +52,8 @@ A name is at most 40 characters, is followed by `: `, is not all digits and is n
   placeholder is its caption. CHATCOM never reads the media itself.
 - **Reactions:** at the end of the message, `(reactions: 😂 Mike, ❤️ Dave, 👍 3)`. A name is one person;
   a number is a count with no names; `👍 Mike ×2` is both.
-- **A quote:** `> Mike: original text` on the line before the message that replies to it. More quoted
+- **A quote:** `> Mike: original text` on the line before the message that replies to it. The name must be a
+  speaker (list them in `# speakers:`); otherwise the whole line is the quoted text. More quoted
   lines start `>` and two spaces. `> text` with no name is a quote from someone not named.
 
 ## Limits

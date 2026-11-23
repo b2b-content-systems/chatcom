@@ -40,7 +40,8 @@ _DATE_LINE = re.compile(r"^---\s*(\d{4})-(\d{2})-(\d{2})\s*---$")
 _STAMP = re.compile(r"^\[(?:(\d{4})-(\d{2})-(\d{2})\s+)?(\d{1,2}):(\d{2})(?::(\d{2}))?\]\s+(.*)$", re.S)
 _PLACEHOLDER = re.compile(r"^<(" + "|".join(KINDS) + r"|deleted)>(?: (.*))?$", re.S)
 _REACTIONS = re.compile(r" ?\(reactions: ((?:[^()\\\n]|\\.)*)\)$")
-_COUNTED = re.compile(r"^(.*) ×(\d+)$")
+_COUNTED = re.compile(r"^(.*) ×(\d{1,6})$")
+MAX_COUNT_DIGITS = 6  # a longer number is a name (and masked), never a count
 _STRUCTURE = ("\\", "#", ">", "-", "[", "<")
 NO_REACTIONS = "-"
 
@@ -124,7 +125,7 @@ def _parse_reactions(body: str) -> list[dict] | None:
         emoji = _unesc(emoji)
         if not rest:
             out.append({"emoji": emoji, "sender": None, "count": 1})
-        elif rest.isdigit() and int(rest) > 0:
+        elif rest.isdigit() and len(rest) <= MAX_COUNT_DIGITS and int(rest) > 0:
             out.append({"emoji": emoji, "sender": None, "count": int(rest)})
         elif (m := _COUNTED.match(rest)) and int(m[2]) > 0:
             out.append({"emoji": emoji, "sender": _unesc(m[1]), "count": int(m[2])})
@@ -316,6 +317,11 @@ def parse(text: str, tz_name: str, *, aliases: dict[str, list[str]] | None = Non
     first_day = next((r.day for r in rows if r.day), None)
     anchor = first_day - timedelta(days=1) if first_day else (anchor or date.today())
     ordinals: Counter = Counter()
+    def who(n: str) -> str:
+        """A name with any phone number inside it masked (a bare number is
+        masked whole by canonical/phone_label)."""
+        return n if is_phone(n) else mask_numbers(n, amap, key)
+
     prev_utc: datetime | None = None
     clocked: list[datetime | None] = []
     for row in rows:
@@ -333,7 +339,8 @@ def parse(text: str, tz_name: str, *, aliases: dict[str, list[str]] | None = Non
     for row, real, aware in zip(rows, clocked, times):
         raw_text, media, deleted, reactions = _body(row)
         text = mask_numbers(normalize_text(raw_text), amap, key)
-        label = phone_label(row.name, key) if is_phone(row.name) else row.name
+        name = who(row.name)
+        label = phone_label(row.name, key) if is_phone(row.name) else name
         id_label = "" if label.startswith("Speaker ") and len(label) <= 10 else label
         if real is not None:
             precision = "exact" if row.clock[2] is not None else "minute"
@@ -355,15 +362,17 @@ def parse(text: str, tz_name: str, *, aliases: dict[str, list[str]] | None = Non
             if q0.startswith("\\"):
                 qsender, qfirst = None, q0[1:]
             else:
-                qsender, qfirst = _split_name(q0) or (None, q0)
-            quote = {"sender": canonical(qsender, amap, masked, key) if qsender else None,
+                hit = _split_name(q0)
+                # only a speaker starts a quote; anything else is quoted text
+                qsender, qfirst = hit if hit and hit[0] in names else (None, q0)
+            quote = {"sender": canonical(who(qsender), amap, masked, key) if qsender else None,
                      "text": mask_numbers(normalize_text("\n".join([qfirst, *row.quote[1:]])), amap, key)}
         if reactions:
-            reactions = [{**r, "sender": canonical(r["sender"], amap, masked, key) if r["sender"] else None}
+            reactions = [{**r, "sender": canonical(who(r["sender"]), amap, masked, key) if r["sender"] else None}
                          for r in reactions]
         msgs.append({
             "id": mid,
-            "sender": canonical(row.name, amap, masked, key),
+            "sender": canonical(name, amap, masked, key),
             "time": stamp,
             "time_precision": precision,
             "text": text,
@@ -398,8 +407,14 @@ def write(messages: list[dict], tz_name: str, *, source: str = "paste") -> str:
         label = m["source"].get("label") or m["sender"]
         if not valid_name(label):
             raise ValueError(f"not a speaker name: {label!r}")
-        if label not in labels:
-            labels.append(label)
+        q = m.get("quote") or {}
+        for n in (label, q.get("sender")):
+            if n is None:
+                continue
+            if not valid_name(n):
+                raise ValueError(f"not a speaker name: {n!r}")
+            if n not in labels:
+                labels.append(n)
     out = [f"# source: {source}"]
     if labels:
         out.append("# speakers: " + ", ".join(_esc_item(n) for n in labels))
@@ -466,11 +481,12 @@ def load(paths: list[Path], ctx) -> tuple[ParseResult, str]:
         raise ChatcomError("CHATCOM_E_USAGE", "a transcript is one text file",
                            "Pass one .txt file with --export (docs/transcript-format.md).")
     p = paths[0]
-    size = p.stat().st_size
-    if size > MAX_BYTES:
-        raise ChatcomError("CHATCOM_E_EXPORT_UNREADABLE", f"{p.name} is {size} bytes, over the {MAX_BYTES} byte limit",
+    with open(p, "rb") as fh:
+        data = fh.read(MAX_BYTES + 1)  # read at most the limit, even if the file grows
+    if len(data) > MAX_BYTES:
+        raise ChatcomError("CHATCOM_E_EXPORT_UNREADABLE", f"{p.name} is over the {MAX_BYTES} byte limit",
                            "Split the transcript and import the newer part.", context={"path": str(p)})
-    text = _decode(p.read_bytes(), p.name)
+    text = _decode(data, p.name)
     # Undated rows are anchored to the day the file was saved.
     anchor = datetime.fromtimestamp(p.stat().st_mtime).date()
     return parse(text, ctx.tz, aliases=ctx.aliases, key=ctx.key, anchor=anchor), p.stem
