@@ -46,6 +46,8 @@ Then drop in your export and ask: `make our group chat a show: tulum.zip`.
 
 **Build progress (v0.1):** the open schemas, the WhatsApp parser (iOS and Android, 8 locale formats, tested), the episode window and the writer (Claude Code session, or Claude with a Gemini fallback) are in the repo. Casting and the video render are next. Today `chatcom episode` stops after the writer with the episode's `beats.json`.
 
+To try the engine as it stands: `pipx install git+https://github.com/b2b-content-systems/chatcom`, then `chatcom new <export>` and `chatcom episode <show> --dry-run`. Adapters for other chat apps: see [CONTRIBUTING-adapters.md](CONTRIBUTING-adapters.md).
+
 Planned commands for the CLI (`pipx install chatcom`):
 
 ```
