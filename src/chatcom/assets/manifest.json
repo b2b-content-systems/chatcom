@@ -1,0 +1,47 @@
+{
+  "_comment": "Every file chatcom ships under assets/, with its licence and fingerprint. scripts/check_licences.py fails the build on a file that is missing here, changed, or under a licence other than OFL-1.1 or CC0-1.0. The large emoji and CJK fonts are not shipped; the render runtime downloads them (adapters/runtime.py BIG_FONTS).",
+  "files": [
+    {
+      "path": "fonts/Bricolage-ExtraBold.woff2",
+      "licence": "OFL-1.1",
+      "licence_file": "fonts/OFL-bricolagegrotesque.txt",
+      "source": "https://fonts.google.com/specimen/Bricolage+Grotesque (Latin subset, woff2)",
+      "sha256": "1786311c41bb9261030b1febc8ce9a39574fb6b6afba0ba9e72dd6c2d8d8cb7b"
+    },
+    {
+      "path": "fonts/DMSerifDisplay-Italic.woff2",
+      "licence": "OFL-1.1",
+      "licence_file": "fonts/OFL-dmserifdisplay.txt",
+      "source": "https://fonts.google.com/specimen/DM+Serif+Display (Latin subset, woff2)",
+      "sha256": "94b0e8fc568c1361f31de02a91297adf78a5a926f4a86932f22643e504cd012f"
+    },
+    {
+      "path": "fonts/JetBrainsMono-Bold.woff2",
+      "licence": "OFL-1.1",
+      "licence_file": "fonts/OFL-jetbrainsmono.txt",
+      "source": "https://fonts.google.com/specimen/JetBrains+Mono (Latin subset, woff2)",
+      "sha256": "28cbd0ddb26da6b3df9e453f3ab7bf7077463751ac0fdfc1b5aa516fe9113866"
+    },
+    {
+      "path": "fonts/JetBrainsMono-Medium.woff2",
+      "licence": "OFL-1.1",
+      "licence_file": "fonts/OFL-jetbrainsmono.txt",
+      "source": "https://fonts.google.com/specimen/JetBrains+Mono (Latin subset, woff2)",
+      "sha256": "615a7673d37b1dd624e2deeb572a1a238f9b32981bf3fc44f87aa14f3bd7d04b"
+    },
+    {
+      "path": "fonts/SpaceGrotesk-Bold.woff2",
+      "licence": "OFL-1.1",
+      "licence_file": "fonts/OFL-spacegrotesk.txt",
+      "source": "https://fonts.google.com/specimen/Space+Grotesk (Latin subset, woff2)",
+      "sha256": "2492847386187b8d1ee093e465f49c6e085a9f6442aba227f565f8893cefcc4d"
+    },
+    {
+      "path": "fonts/SpaceGrotesk-Medium.woff2",
+      "licence": "OFL-1.1",
+      "licence_file": "fonts/OFL-spacegrotesk.txt",
+      "source": "https://fonts.google.com/specimen/Space+Grotesk (Latin subset, woff2)",
+      "sha256": "cedfe94cfb039ab89a4a655dce1dfe9a3ef5afa020dcee403e72d988cdadec99"
+    }
+  ]
+}

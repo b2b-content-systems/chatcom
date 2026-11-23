@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "chatcom"
-version = "0.1.0.dev9"
+version = "0.1.0.dev10"
 description = "Turn your group chat into your favorite TV series: an episode starring your friends."
 readme = "README.md"
 license = { text = "MIT" }
@@ -31,7 +31,8 @@ Repository = "https://github.com/b2b-content-systems/chatcom"
 where = ["src"]
 
 [tool.setuptools.package-data]
-chatcom = ["schemas/*.json", "prompts/*.md"]
+chatcom = ["schemas/*.json", "prompts/*.md", "render_templates/*", "runtime/package.json", "runtime/package-lock.json",
+           "assets/fonts/*.woff2", "assets/fonts/*.txt", "assets/manifest.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

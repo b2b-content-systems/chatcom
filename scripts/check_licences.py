@@ -35,6 +35,37 @@ def walk(name: str, seen: dict) -> None:
         walk(re.split(r"[ ;<>=!~\[(]", req, maxsplit=1)[0], seen)
 
 
+ASSET_LICENCES = {"OFL-1.1", "CC0-1.0"}
+
+
+def check_assets(root: str = "src/chatcom/assets") -> int:
+    """Every shipped asset is in assets/manifest.json, unchanged, under an
+    allowed licence, with its licence text shipped beside it."""
+    import hashlib
+    import json
+    from pathlib import Path
+    base = Path(root)
+    rows = {r["path"]: r for r in json.loads((base / "manifest.json").read_text("utf-8"))["files"]}
+    bad = 0
+    for f in sorted(p for p in base.rglob("*") if p.is_file() and p.name != "manifest.json"):
+        rel = f.relative_to(base).as_posix()
+        if f.name.startswith("OFL-") and f.suffix == ".txt":
+            continue
+        r = rows.get(rel)
+        problem = ("not in assets/manifest.json" if r is None
+                   else f"licence {r['licence']} is not one of {sorted(ASSET_LICENCES)}" if r["licence"] not in ASSET_LICENCES
+                   else "changed since the manifest was written" if hashlib.sha256(f.read_bytes()).hexdigest() != r["sha256"]
+                   else f"its licence text {r['licence_file']} is missing" if r["licence"] == "OFL-1.1" and not (base / r["licence_file"]).is_file()
+                   else None)
+        print(f"{'BAD' if problem else 'ok '} asset {rel}: {problem or r['licence']}")
+        bad += problem is not None
+    for rel in rows:
+        if not (base / rel).is_file():
+            print(f"BAD asset {rel}: in the manifest but not shipped")
+            bad += 1
+    return bad
+
+
 def main() -> int:
     seen: dict[str, str | None] = {}
     walk("chatcom", seen)
@@ -46,6 +77,7 @@ def main() -> int:
         ok = name == "chatcom" or (ALLOWED.search(lic) and not BANNED.search(lic))
         bad += not ok
         print(f"{'ok ' if ok else 'BAD'} {name}: {lic or 'unknown'}")
+    bad += check_assets()
     vendored = open("src/chatcom/adapters/writers/llm_fallback.py", encoding="utf-8").read(400)
     if "MIT" not in vendored:
         print("BAD vendored llm_fallback.py lacks its MIT header")
