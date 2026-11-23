@@ -36,11 +36,12 @@ log and error (`core/errors.redact`).
 
 | Path | What lives there |
 | --- | --- |
-| `src/chatcom/core/` | Pure rules: messages, ids, masking, resume, the screenshot join, state, the casting plan. Imports no adapter, no network |
+| `src/chatcom/core/` | Pure rules: messages, ids, masking, resume, the screenshot join, state, the casting plan, the episode timeline. Imports no adapter, no network |
 | `src/chatcom/adapters/` | Sources (WhatsApp, Telegram, transcript, screenshots), readers, writers, the show store |
 | `src/chatcom/app.py`, `reading.py`, `casting.py`, `cli.py` | Commands |
 | `src/chatcom/schemas/`, `prompts/` | The open schemas; the writer and reader briefs |
 | `docs/design/any-group-chat.md` | The spec. `scripts/check_spec.py` keeps its code and flag tables true |
+| `docs/design/render.md` | The render plan (Next Step 4) and its review record |
 
 ## Before you finish
 
