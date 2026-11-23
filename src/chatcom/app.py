@@ -85,7 +85,7 @@ def resolve_show(slug: str | None) -> store.Show:
         return store.Show(shows[0])
     raise ChatcomError("CHATCOM_E_SHOW_AMBIGUOUS" if shows else "CHATCOM_E_SHOW_NOT_FOUND",
                        f"name the show; there are {len(shows)} in {store.home()}",
-                       "Pass the show slug, for example `chatcom episode lake-house`.", context={"shows": shows})
+                       "Pass the show slug, for example `chatcom episode lake-house --export <export>`.", context={"shows": shows})
 
 
 def _match_member(name: str, senders: list[str]) -> str:

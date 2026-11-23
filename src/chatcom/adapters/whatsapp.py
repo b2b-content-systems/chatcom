@@ -81,14 +81,18 @@ _ENCRYPTION = ("end-to-end encrypted", "ende-zu-ende-verschlüsselt", "cifrados 
 _PHONE = re.compile(r"^\+?[\d\s()\-‑.]{7,}$")
 # A phone number inside message text: 10+ digits with phone separators only
 # (dates and times have fewer digits or other separators).
-_PHONE_IN_TEXT = re.compile(r"(?<![\w@+])(@?)(\+?\d[\d \u00a0()\-\u2011.]*\d)(?!\w)")
-MIN_PHONE_DIGITS = 10
-MAX_PHONE_DIGITS = 15  # E.164
-# Spared only when clearly not a phone: a date (with or without a time after
-# it), a decimal, or part of a link. Everything else that looks like a phone is
-# masked: over-masking costs the writer a little, under-masking leaks.
-_DATE_LIKE = re.compile(r"^(\d{4}-\d{2}-\d{2}|\d{1,2}[./-]\d{1,2}[./-]\d{2,4})(\s+\d{1,2})?$")
-_DECIMAL = re.compile(r"^\d+\.\d+$")
+# A run of digits joined by anything a phone number is written with: spaces of
+# every width, dashes of every kind, dots, slashes, brackets, a leading "+".
+# What is around it does not matter (_italics_, "Tel5550102233", "@1555...").
+_DIGIT_RUN = re.compile(r"\+?\d(?:[\d \u00a0\u2007\u202f()\-\u2010-\u2015./]*\d)?")
+MIN_MASK_DIGITS = 9    # Spanish and Portuguese mobiles have 9
+MAX_PHONE_DIGITS = 15  # E.164; a longer run is masked whole
+# The only runs spared at 9+ digits: a date (optionally followed by an hour,
+# as in "2026-11-22 10:30") and a short decimal ("3.14159265358").
+_DATE_LIKE = re.compile(r"^(\d{4}-\d{1,2}-\d{1,2}|\d{1,2}[./-]\d{1,2}[./-](\d{4}|\d{2}))(\s+\d{1,2})?$")
+_DECIMAL = re.compile(r"^[1-9]\d?\.\d+$")
+_URL = re.compile(r"(?:[a-z][a-z0-9+.-]*://|www\.)\S+", re.I)
+_PHONE_URL = re.compile(r"(wa\.me|whatsapp\.com|^tel:|phone=)", re.I)
 
 
 @dataclass
@@ -461,34 +465,32 @@ def _canonical(sender: str, alias_map: dict[str, str], masked: dict[str, str]) -
 
 
 def mask_numbers(text: str, alias_map: dict[str, str]) -> str:
-    """Phone numbers never leave in message text: a number with an alias
-    becomes that name, any other becomes its stable 'Unnamed' label. A WhatsApp
+    """Phone numbers never leave in message text. A number with an alias
+    becomes that name; any other becomes its stable 'Unnamed' label (a WhatsApp
     @mention of an unsaved contact is written as their number, so it maps to
-    the same label as their messages. Fails closed: when unsure, mask."""
-    def one(at: str, number: str) -> str | None:
-        n = len(_digits(number))
-        grouped = number.startswith("+") or len(re.split(r"[^\d]+", number.lstrip("+"))) >= 3
-        if n < (9 if grouped else MIN_PHONE_DIGITS) or _DATE_LIKE.match(number) or _DECIMAL.match(number):
-            return None
-        return at + (alias_map.get("#" + _phone_key(number)) or phone_label(number))
+    the same label as their messages). Fails closed: any run of 9 or more
+    digits is masked unless it is plainly a date or a short decimal, and
+    ordinary links are left whole, except WhatsApp and tel: links."""
+    if not text:
+        return text
 
-    def repl(m: re.Match) -> str:
-        at, number = m.group(1), m.group(2)
-        word_start = max(text.rfind(" ", 0, m.start()), text.rfind("\n", 0, m.start())) + 1
-        if "://" in text[word_start:m.start()] or "www." in text[word_start:m.start()]:
-            return m.group(0)  # an id inside a link
-        if len(_digits(number)) <= MAX_PHONE_DIGITS:
-            return one(at, number) or m.group(0)
-        # Longer than any phone: two numbers side by side, or an account
-        # number in groups. Mask each run of whitespace-separated parts that
-        # fits a phone's length.
-        chunks, cur = [], []
-        for t in number.split():
-            if cur and len(_digits(" ".join(cur + [t]))) > MAX_PHONE_DIGITS:
-                chunks.append(" ".join(cur))
-                cur = []
-            cur.append(t)
-        chunks.append(" ".join(cur))
-        return at + " ".join(one("", c) or c for c in chunks)
+    def run(m: re.Match) -> str:
+        number = m.group(0)
+        digits = _digits(number)
+        if len(digits) < MIN_MASK_DIGITS or _DATE_LIKE.match(number) or _DECIMAL.match(number):
+            return number
+        if len(digits) > MAX_PHONE_DIGITS:
+            return phone_label(number)
+        return alias_map.get("#" + _phone_key(number)) or phone_label(number)
 
-    return _PHONE_IN_TEXT.sub(repl, text) if text else text
+    links: list[str] = []
+
+    def keep_link(m: re.Match) -> str:
+        url = m.group(0)
+        if _PHONE_URL.search(url):
+            return _DIGIT_RUN.sub(run, url)
+        links.append(url)
+        return f"\x00{chr(0xE000 + len(links) - 1)}\x00"
+
+    out = _DIGIT_RUN.sub(run, _URL.sub(keep_link, re.sub(r"(?i)\btel:\S+", lambda m: _DIGIT_RUN.sub(run, m.group(0)), text)))
+    return re.sub("\x00(.)\x00", lambda m: links[ord(m.group(1)) - 0xE000], out)

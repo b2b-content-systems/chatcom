@@ -283,7 +283,7 @@ def test_store_writes_are_atomic_and_private(chatcom_home):
 
 # Value: protects=masking leaves dates, times, lists, URL ids and long account numbers alone; fails_when=the pattern widens back to any 10-digit run; why_new=the fix-check saw dates become 'Unnamed' people; seam=none; no_claim=every national phone format
 @pytest.mark.parametrize("text", ["meet 2024-01-15 10:30", "meet 22.11.2026 10:30", "pi 3.14159265358",
-                                  "see https://x.com/status/1234567890123", "order 123456789"])
+                                  "see https://x.com/status/1234567890123", "at 10:30", "call 911", "code 12345"])
 def test_masking_spares_non_phone_numbers(text):
     assert whatsapp.mask_numbers(text, {}) == text
 
@@ -310,8 +310,8 @@ def test_same_number_with_or_without_country_code_is_one_label():
     assert whatsapp.mask_numbers("555.010.2233", {}) == whatsapp.mask_numbers("+1 (555) 010-2233", {})
 
 
-def test_nine_digit_grouped_numbers_are_masked_decimals_are_not():
-    out = whatsapp.mask_numbers("call 612 34 56 78 or +34 612 345 678, pi is 3.14159265358", {})
+def test_nine_digit_numbers_are_masked_decimals_are_not():
+    out = whatsapp.mask_numbers("call 612 34 56 78, 612345678 or +34 612 345 678, pi is 3.14159265358", {})
     assert "612" not in out and "3.14159265358" in out
 
 
@@ -392,12 +392,16 @@ def test_every_skill_command_parses():
     import re as _re
     from pathlib import Path
     text = (Path(__file__).resolve().parent.parent / "skills" / "chatcom" / "SKILL.md").read_text("utf-8")
-    text += (Path(__file__).resolve().parent.parent / "src" / "chatcom" / "core" / "state.py").read_text("utf-8")
-    cmds = set(_re.findall(r"`chatcom ([^`]+)`", text))
+    src = Path(__file__).resolve().parent.parent / "src" / "chatcom"
+    for f in ("core/state.py", "app.py", "cli.py", "adapters/whatsapp.py", "core/window.py"):
+        text += (src / f).read_text("utf-8")
+    cmds = {c for c in _re.findall(r"`chatcom ([^`]+)`", text) if not c.startswith(("rewrite", "rollback"))}
     assert len(cmds) >= 7
     fill = {"<show>": "lake-house", "<export>": "x.zip", "<beats.json path>": "b.json", "<your model name>": "m",
             "\"<their name in the chat>\"": "Dave", "\"<name>\"": "Sam",
-            "<sitcom|anime|cartoon80s|truecrime|cutscene|facetime|flipphone|reality>": "sitcom"}
+            "<sitcom|anime|cartoon80s|truecrime|cutscene|facetime|flipphone|reality>": "sitcom",
+            "{show.slug}": "lake-house", "{slug}": "lake-house", "<file>": "x.zip", "F": "x.zip",
+            "<export.zip|export.txt>": "x.zip", "<export>": "x.zip"}
     parser = cli.build_parser()
     for c in cmds:
         for k, v in fill.items():
@@ -406,3 +410,19 @@ def test_every_skill_command_parses():
         if argv == ["--version"]:
             continue
         parser.parse_args(argv)  # SystemExit here means the skill names a command that cannot run
+
+
+# Value: protects=no phone format the final fix-check tried leaks (slashes, italics, wa.me and tel: links, spaced pairs, one-dot, en dash, narrow spaces, glued letters); fails_when=masking goes back to a pattern with spare rules; why_new=the final fix-check's probe list; seam=none; no_claim=formats not listed
+LEAK_PROBES = ["ruf an: 0151/12345678", "Tel. 030/1234567", "+49 151/12345678", "06/12/34/56/78", "_5550102233_",
+               "_+1 555 010 2233_", "https://wa.me/15550102233", "555 010 2233 555 010 4455",
+               "06 12 34 56 78 06 98 76 54 32", "0151.12345678", "0612.345678", "5550.102233", "11 91234\u20135678",
+               "+1\u202f555\u202f010\u202f2233", "Telefon5550102233", "N\u00ba5550102233", "5550102233x",
+               "my cell 555-010-2233: text me", "phone=5550102233", "612345678", "tel:+15550102233", "@15550102233 hi"]
+
+
+@pytest.mark.parametrize("text", LEAK_PROBES)
+def test_no_probe_leaks(text):
+    import re as _re
+    out = whatsapp.mask_numbers(text, {})
+    rest = _re.sub(r"Unnamed [0-9a-f]{6}", "", out)
+    assert not _re.search(r"\d{5,}", _re.sub(r"[\s/.\-\u2013\u202f()+]", "", rest)), out
