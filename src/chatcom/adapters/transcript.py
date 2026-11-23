@@ -23,7 +23,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from chatcom.adapters.source import ParseResult
-from chatcom.core.clock import Synthetic, localize
+from chatcom.core.clock import fill, localize
 from chatcom.core.errors import ChatcomError
 from chatcom.core.masking import alias_map, canonical, is_phone, mask_numbers, phone_label
 from chatcom.core.messages import (TIMED, body_token, context_hash, message_hash, normalize_text,
@@ -39,7 +39,7 @@ _ORIGIN = re.compile(r"^[a-z0-9][a-z0-9-]{0,31}$")
 _DATE_LINE = re.compile(r"^---\s*(\d{4})-(\d{2})-(\d{2})\s*---$")
 _STAMP = re.compile(r"^\[(?:(\d{4})-(\d{2})-(\d{2})\s+)?(\d{1,2}):(\d{2})(?::(\d{2}))?\]\s+(.*)$", re.S)
 _PLACEHOLDER = re.compile(r"^<(" + "|".join(KINDS) + r"|deleted)>(?: (.*))?$", re.S)
-_REACTIONS = re.compile(r" ?\(reactions: ([^()\n]*)\)$")
+_REACTIONS = re.compile(r" ?\(reactions: ((?:[^()\\\n]|\\.)*)\)$")
 _COUNTED = re.compile(r"^(.*) ×(\d+)$")
 _STRUCTURE = ("\\", "#", ">", "-", "[", "<")
 NO_REACTIONS = "-"
@@ -69,42 +69,67 @@ def _split_name(s: str) -> tuple[str, str] | None:
 
 # ---- name lists (speakers header, reactions) --------------------------------
 
+_ITEM_SPECIAL = ("\\", ",", "(", ")", "×")
+
+
 def _esc_item(s: str) -> str:
-    return s.replace("\\", "\\\\").replace(",", "\\,")
+    """A name in a list: `\\`, `,`, `(`, `)` and `×` escaped, and an all-digit
+    name escaped so it cannot read as a count."""
+    out = "".join("\\" + ch if ch in _ITEM_SPECIAL else ch for ch in s)
+    return "\\" + out if s.isdigit() else out
 
 
-def _split_items(s: str) -> list[str]:
+def _unesc(raw: str) -> str:
+    out, i = [], 0
+    while i < len(raw):
+        if raw[i] == "\\" and i + 1 < len(raw):
+            out.append(raw[i + 1])
+            i += 2
+        else:
+            out.append(raw[i])
+            i += 1
+    return "".join(out)
+
+
+def _split_raw(s: str) -> list[str]:
+    """Split on commas that are not escaped; escapes are kept."""
     out, cur, i = [], [], 0
     while i < len(s):
-        ch = s[i]
-        if ch == "\\" and i + 1 < len(s):
-            cur.append(s[i + 1])
+        if s[i] == "\\" and i + 1 < len(s):
+            cur.append(s[i:i + 2])
             i += 2
             continue
-        if ch == ",":
+        if s[i] == ",":
             out.append("".join(cur).strip())
             cur = []
         else:
-            cur.append(ch)
+            cur.append(s[i])
         i += 1
     out.append("".join(cur).strip())
     return out
 
 
+def _split_items(s: str) -> list[str]:
+    return [_unesc(x) for x in _split_raw(s)]
+
+
 def _parse_reactions(body: str) -> list[dict] | None:
+    """Items read on the raw text, before escapes are removed, so an escaped
+    name can never read as a count."""
     out = []
-    for item in _split_items(body):
+    for item in _split_raw(body):
         emoji, _, rest = item.partition(" ")
         if not emoji:
             return None
+        emoji = _unesc(emoji)
         if not rest:
             out.append({"emoji": emoji, "sender": None, "count": 1})
         elif rest.isdigit() and int(rest) > 0:
             out.append({"emoji": emoji, "sender": None, "count": int(rest)})
         elif (m := _COUNTED.match(rest)) and int(m[2]) > 0:
-            out.append({"emoji": emoji, "sender": m[1], "count": int(m[2])})
+            out.append({"emoji": emoji, "sender": _unesc(m[1]), "count": int(m[2])})
         else:
-            out.append({"emoji": emoji, "sender": rest, "count": 1})
+            out.append({"emoji": emoji, "sender": _unesc(rest), "count": 1})
     return out
 
 
@@ -112,11 +137,11 @@ def _write_reactions(reactions: list[dict]) -> str:
     items = []
     for r in reactions:
         if r.get("sender") is None:
-            items.append(f"{r['emoji']} {r['count']}")
+            items.append(f"{_esc_item(r['emoji'])} {r['count']}")
         elif r["count"] == 1:
-            items.append(f"{r['emoji']} {_esc_item(r['sender'])}")
+            items.append(f"{_esc_item(r['emoji'])} {_esc_item(r['sender'])}")
         else:
-            items.append(f"{r['emoji']} {_esc_item(r['sender'])} ×{r['count']}")
+            items.append(f"{_esc_item(r['emoji'])} {_esc_item(r['sender'])} ×{r['count']}")
     return f"(reactions: {', '.join(items)})"
 
 
@@ -285,7 +310,6 @@ def parse(text: str, tz_name: str, *, aliases: dict[str, list[str]] | None = Non
 
     amap = alias_map(aliases or {})
     masked: dict[str, str] = {}
-    synthetic = Synthetic(tz)
     # Rows before the first date shown came before it: they sit on the day
     # before. A transcript with no date at all uses the anchor (the day the
     # file was saved).
@@ -293,27 +317,32 @@ def parse(text: str, tz_name: str, *, aliases: dict[str, list[str]] | None = Non
     anchor = first_day - timedelta(days=1) if first_day else (anchor or date.today())
     ordinals: Counter = Counter()
     prev_utc: datetime | None = None
+    clocked: list[datetime | None] = []
+    for row in rows:
+        if row.clock and row.day:
+            h, mi, sec = row.clock
+            aware = localize(datetime(row.day.year, row.day.month, row.day.day, h, mi, sec or 0), tz, prev_utc)
+            prev_utc = aware.astimezone(timezone.utc)
+            clocked.append(aware)
+        else:
+            clocked.append(None)
+    times = fill(clocked, [r.day or anchor for r in rows], tz)
     prev_key = ("", "")
     run = 0
     msgs: list[dict] = []
-    for row in rows:
+    for row, real, aware in zip(rows, clocked, times):
         raw_text, media, deleted, reactions = _body(row)
         text = mask_numbers(normalize_text(raw_text), amap, key)
         label = phone_label(row.name, key) if is_phone(row.name) else row.name
         id_label = "" if label.startswith("Speaker ") and len(label) <= 10 else label
-        if row.clock and row.day:
-            h, mi, s = row.clock
-            aware = localize(datetime(row.day.year, row.day.month, row.day.day, h, mi, s or 0), tz, prev_utc)
-            prev_utc = aware.astimezone(timezone.utc)
-            synthetic.seen(aware)
-            precision = "exact" if s is not None else "minute"
+        if real is not None:
+            precision = "exact" if row.clock[2] is not None else "minute"
             stamp = aware.isoformat(timespec="seconds")
             minute = utc_minute(aware)
             mid = message_hash(id_label, minute, ordinals[(id_label, minute)], text, media, deleted, key)
             ordinals[(id_label, minute)] += 1
         else:
             precision = "day" if row.day else "order"
-            aware = synthetic.next(row.day or anchor)
             stamp = aware.isoformat(timespec="milliseconds")
             token = body_token(text, media, deleted)
             run = run + 1 if (id_label, token) == prev_key else 0

@@ -34,9 +34,11 @@ file cannot reach a model), unless you pass `--source transcript`.
 | `Name: text` | no time: it takes the date above it |
 | `--- 2026-01-09 ---` | the date for the lines after it |
 
-A full `[date time]` line also sets the date for the lines after it. Lines with no date at all (before the
-first date) are placed on the day before the first date shown, or on the day the file was saved when no date
-shows anywhere.
+A full `[date time]` line also sets the date for the lines after it. A line with no time keeps its place:
+it goes just after the line before it on the same day (or just before the next timed line, or at 12:00).
+Lines with no date at all (before the first date) are placed on the day before the first date shown, or on
+the day the file was saved when no date shows anywhere. A `[19:02]` time with no date above it is kept in
+order but its time is not used, so add a `--- YYYY-MM-DD ---` line when you know the date.
 
 A name is at most 40 characters, is followed by `: `, is not all digits and is not a web address scheme.
 

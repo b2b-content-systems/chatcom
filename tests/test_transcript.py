@@ -69,7 +69,7 @@ def test_dates_set_the_precision():
                 "A: another day row\n")
     p = [(m["time_precision"], m["time"]) for m in res.messages]
     assert p[0] == ("order", "2026-02-28T12:00:00.000-05:00")  # the day before the first date shown
-    assert p[1] == ("day", "2026-03-01T12:00:00.000-05:00")
+    assert p[1] == ("day", "2026-03-01T09:14:59.999-05:00")  # just before the next timed row that day
     assert p[2] == ("minute", "2026-03-01T09:15:00-05:00") and p[3] == ("exact", "2026-03-01T09:15:30-05:00")
     assert p[4][0] == "day"
     times = [datetime.fromisoformat(t) for _, t in p]
@@ -87,7 +87,7 @@ def test_synthetic_times_are_strictly_increasing():
 def test_a_full_timestamp_dates_the_undated_lines_after_it():
     res = parse("# speakers: A, B\n[2026-04-02 08:00] A: timed\nB: undated\n")
     assert [m["time_precision"] for m in res.messages] == ["minute", "day"]
-    assert res.messages[1]["time"] == "2026-04-02T12:00:00.000-04:00"
+    assert res.messages[1]["time"] == "2026-04-02T08:00:00.001-04:00"  # just after the row before it
     back = T.parse(T.write(res.messages, TZ), TZ, key=UNKEYED)
     assert without_lines(back.messages) == without_lines(res.messages)
 
@@ -275,3 +275,31 @@ def test_unparsed_lines_over_the_limit_fail(capsys, chatcom_home, tmp_path, not_
     f.write_text("# source: paste\n# speakers: Mike\n" + "stray line\n" * 5 + "Mike: hi\n", "utf-8")
     code, _, err = run(capsys, "new", str(f), "--operator", "Mike", "--tz", TZ)
     assert code == 2 and "CHATCOM_E_UNPARSED_LINES" in err and "transcript" in err
+
+
+# Value: protects=a row with no time between timed rows stays between them after the window sorts; fails_when=
+# undated rows are pinned to 12:00 again; why_new=PR 2 review; seam=none; no_claim=sources that go back in time
+@pytest.mark.parametrize("src,order", [
+    ("[2026-03-01 09:00] A: 1\nB: 2\n[10:00] C: 3\n", ["1", "2", "3"]),
+    ("--- 2026-03-01 ---\nB: 1\n[10:00] C: 2\n", ["1", "2"]),
+    ("--- 2026-03-01 ---\n[13:00] A: 1\nB: 2\nC: 3\n[13:01] A: 4\n", ["1", "2", "3", "4"]),
+    ("A: 1\nB: 2\n[2026-03-01 08:00] C: 3\nA: 4\n", ["1", "2", "3", "4"]),
+])
+def test_rows_with_no_time_keep_chat_order(src, order):
+    res = parse("# speakers: A, B, C\n" + src)
+    assert [m["text"] for m in window.dedupe(res.messages)] == order
+    times = [datetime.fromisoformat(m["time"]) for m in res.messages]
+    assert all(b > a for a, b in zip(times, times[1:]))
+
+
+def test_a_time_with_no_date_is_kept_in_order_without_a_clock():
+    res = parse("# speakers: A, B\n[19:02] A: hi\n[19:03] B: yo\n", anchor=datetime(2026, 5, 1).date())
+    assert [m["time_precision"] for m in res.messages] == ["order", "order"]
+
+
+@pytest.mark.parametrize("who", ["Mom (cell)", "Bob ×2", "42", "a\\b, c", "(x)"])
+def test_reaction_senders_round_trip(who):
+    m = _msg(0, "A", "x", reactions=[{"emoji": "👍", "sender": who, "count": 1},
+                                    {"emoji": "😂", "sender": who, "count": 3}])
+    back = T.parse(T.write([m], TZ), TZ, key=UNKEYED).messages[0]
+    assert back["text"] == "x" and back["reactions"] == m["reactions"]
