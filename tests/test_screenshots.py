@@ -220,9 +220,10 @@ def test_dates_set_precision_and_the_anchor_overrides():
     j = S.join([img("1", rows)], tz=NY, operator="Dave")
     assert [m["time_precision"] for m in j.messages] == ["order", "day", "minute"]
     assert j.messages[2]["time"].startswith("2026-01-08T10:00")
-    j = S.join([img("1", rows)], tz=NY, operator="Dave", anchor=date(2025, 6, 2))
+    j = S.join([img("1", rows)], tz=NY, operator="Dave", anchor=date(2026, 1, 7))
     assert [m["time_precision"] for m in j.messages] == ["minute", "day", "minute"]
-    assert j.messages[0]["time"].startswith("2025-06-02T09:00") and j.messages[2]["time"].startswith("2025-06-01")
+    # the anchor dates the rows before the first header; "Yesterday" is still the day before the capture
+    assert j.messages[0]["time"].startswith("2026-01-07T09:00") and j.messages[2]["time"].startswith("2026-01-08")
 
 
 def test_placeholders_reactions_and_quotes_pass_through():
@@ -423,7 +424,7 @@ def test_a_failed_new_leaves_no_copies(capsys, chatcom_home, tmp_path, not_a_tty
                        "--tz", TZ, "--writer", "replay", "--replay-reads", str(FIX / "lake-reads.json"),
                        "--accept-data-flow")
     assert code == 2 and "CHATCOM_E_UNKNOWN_MEMBER" in err  # fails after the screenshots were read
-    assert (chatcom_home / "cache").exists()  # they were read
+    assert not (chatcom_home / "cache").exists()  # replay reads are never cached
     assert not any((chatcom_home / "imports").glob("*"))
 
 
@@ -433,3 +434,52 @@ def test_tiles_count_against_the_limit(tmp_path):
     with pytest.raises(ChatcomError) as e:
         I.copy_all(I.manifest([tmp_path]), tmp_path / "out", max_images=2)
     assert e.value.code == "CHATCOM_E_TOO_MANY_IMAGES"
+
+
+
+@pytest.mark.parametrize("name", ["Signal", "Tel", "www", "x" * 39 + ":", "Mike: Jr", "line\nbreak"])
+def test_any_display_name_survives_the_transcript(name):
+    from chatcom.adapters import transcript as T
+    j = S.join([img("1", [row("hi", name=name), row("yo", side="right")])], tz=NY, operator="Dave")
+    msgs = [{"sender": m["label"], "time": m["time"], "time_precision": m["time_precision"], "text": m["text"],
+             "media": None, "deleted": False, "reactions": None, "quote": None, "source": {"label": m["label"]}}
+            for m in j.messages]
+    back = T.parse(T.write(msgs, TZ, source="screenshots"), TZ)
+    assert [m["sender"] for m in back.messages] == [m["label"] for m in j.messages]
+
+
+def test_a_speaker_value_that_is_not_a_name_is_a_usage_error():
+    with pytest.raises(ChatcomError) as e:
+        S.join([img("1", [row("hi")])], tz=NY, operator="Dave", speakers={"A": "12345"})
+    assert e.value.code == "CHATCOM_E_USAGE"
+    j = S.join([img("1", [row("hi")])], tz=NY, operator="Dave", speakers={"A": "Mike: Jr"})
+    assert j.messages[0]["label"] == "Mike Jr"
+
+
+@needs_ffmpeg
+def test_replace_clears_old_copies(tmp_path):
+    src = tmp_path / "a"
+    src.mkdir()
+    for k in range(3):
+        (src / f"{k}.png").write_bytes(png(10, 10, rgb=(k, 0, 0)))
+    out = tmp_path / "out"
+    I.copy_all(I.manifest([src]), out)
+    (src / "2.png").unlink()
+    I.copy_all(I.manifest([src]), out)
+    assert sorted(p.name for p in out.iterdir()) == ["001.png", "002.png"]
+
+
+def test_review_next_command_names_the_replay_file():
+    st = {"stage": "read", "transcript": "/x/transcript.txt", "writer_mode": "replay"}
+    assert "--replay <file>" in state_ops.next_command(st, "s")
+
+
+
+def test_unnamed_speakers_fail_closed_when_the_show_excludes_someone():
+    from chatcom import app
+    from chatcom.adapters.source import ParseResult
+    res = ParseResult([{"sender": "Speaker A"}, {"sender": "Dave"}], 0, [], 2, {}, None, {}, "screenshots")
+    with pytest.raises(ChatcomError) as e:
+        app.check_screenshot_exclusions({"exclude": ["Sam"]}, res)
+    assert e.value.code == "CHATCOM_E_SPEAKER_UNMAPPED" and "--speaker" in e.value.fix
+    app.check_screenshot_exclusions({"exclude": []}, res)  # no exclusions: unnamed is fine

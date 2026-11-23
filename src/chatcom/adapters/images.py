@@ -245,7 +245,7 @@ def _heic_to_png(src: Path, tmp: Path) -> Path:
     if sys.platform != "darwin" or not shutil.which("sips"):
         raise _unreadable(src.name, "HEIC is read only on macOS; save the screenshot as PNG or JPEG")
     out = tmp / (hashlib.sha256(str(src).encode()).hexdigest()[:12] + ".png")
-    _run(["sips", "-s", "format", "png", str(src), "--out", str(out)], src.name)
+    _run(["sips", "-s", "format", "png", str(src.resolve()), "--out", str(out)], src.name)
     return out
 
 
@@ -272,12 +272,14 @@ def tiles(width: int, height: int) -> list[tuple[int, int]]:
 def copy_all(entries: list[Entry], dest: Path, max_images: int = MAX_IMAGES) -> list[dict]:
     """Re-encode each image (and split tall ones) into `dest`. Returns one
     record per copy, in manifest order."""
-    dest.mkdir(parents=True, exist_ok=True)
+    if dest.exists():  # a --replace import never keeps copies from the one before
+        shutil.rmtree(dest)
+    dest.mkdir(parents=True)
     out: list[dict] = []
     with tempfile.TemporaryDirectory() as td:
         tmp = Path(td)
         for i, e in enumerate(entries, start=1):
-            if kind_of(e.path.read_bytes()[:16]) != e.kind:
+            if hashlib.sha256(e.path.read_bytes()).hexdigest() != e.sha256:
                 raise _unreadable(e.name, "the file changed after it was listed")
             src, kind, w, h = e.path, e.kind, e.width, e.height
             if kind == "heic":

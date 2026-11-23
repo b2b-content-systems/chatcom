@@ -95,9 +95,13 @@ def next_command(state: dict | None, slug: str) -> str:
         return f"chatcom ingest {slug} --export <file>"
     stage = state["stage"]
     if stage == "read" and state.get("transcript"):
-        verb = "ingest" if state.get("writer_mode") == "session" else "episode"
-        tail = "" if verb == "ingest" else f" --writer {state.get('writer_mode', 'anthropic')}"
-        return f"check {state['transcript']}, then chatcom {verb} {slug} --export {state['transcript']}{tail}"
+        # a runnable command; the CLI says to check the transcript first
+        import shlex
+        mode = state.get("writer_mode", "anthropic")
+        if mode == "session":
+            return f"chatcom ingest {slug} --export {shlex.quote(state['transcript'])} --accept-data-flow"
+        tail = f" --writer {mode}" + (" --replay <file>" if mode == "replay" else "")
+        return f"chatcom episode {slug} --export {shlex.quote(state['transcript'])}{tail}"
     if stage in ("copied", "read"):
         return f"chatcom {'ingest' if state.get('writer_mode') == 'session' else 'episode'} {slug} --export <file> --replace"
     if stage == "ingested":

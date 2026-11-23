@@ -117,8 +117,9 @@ def clean_name(name: str | None) -> str | None:
     """A visible sender name as a transcript speaker name, or None."""
     if not name:
         return None
-    n = normalize_text(name).lstrip("~").strip().replace(": ", " ").rstrip(":")
-    n = n.lstrip("\\#>-[<").strip()[:MAX_NAME].strip()
+    n = normalize_text(name.replace("\n", " ")).lstrip("~").strip().replace(": ", " ")
+    n = n.lstrip("\\#>-[<").strip()[:MAX_NAME]
+    n = normalize_text(n).rstrip(":").strip()  # a cut can leave a trailing colon or space
     if not n or n.isdigit():
         return None
     return n
@@ -191,6 +192,12 @@ def is_reversed(images: list[Image]) -> bool:
 def join(images: list[Image], *, tz: tzinfo, operator: str, speakers: dict[str, str] | None = None,
          reverse: bool | None = None, anchor: date | None = None) -> Joined:
     speakers = dict(speakers or {})
+    for k, v in list(speakers.items()):
+        clean = clean_name(v)
+        if clean is None:
+            raise ChatcomError("CHATCOM_E_USAGE", f"--speaker {k}={v!r}: not a name chatcom can use",
+                               "Use a name without a line break, not all digits (a colon is dropped).")
+        speakers[k] = clean
     rev = is_reversed(images) if reverse is None else reverse
     # copies of the rows: the caller's reads are never changed
     order = [Image(img.name, img.captured, [dict(r) for r in img.rows], img.chat_name)
@@ -219,7 +226,7 @@ def join(images: list[Image], *, tz: tzinfo, operator: str, speakers: dict[str, 
     carry: str | None = None
     chat_name = next((img.chat_name for img in order if img.chat_name), None)
     for img, rows in zip(order, kept):
-        ref = anchor or img.captured
+        ref = img.captured  # "Today" is the day each screenshot was taken; --anchor-date only dates the start
         for r in rows:
             if r.get("type") == "date":
                 current = resolve_date(r.get("text", ""), ref) or current

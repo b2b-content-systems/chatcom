@@ -24,7 +24,8 @@ the next releases. Until then, paste or type the chat as a transcript ([transcri
 3. **Joining.** Fixed rules, no model: oldest first (newest-first screenshots are detected, or pass
    `--reverse` / `--no-reverse`); repeated rows at a seam are dropped; your own bubbles (the right side) are you;
    a bubble with no name takes the name above it; no name at all is `Speaker A`. Day headers are resolved
-   against when each screenshot was taken (`--anchor-date YYYY-MM-DD` overrides).
+   against when each screenshot was taken. `--anchor-date YYYY-MM-DD` dates the messages above the first
+   header. With people excluded, every `Speaker A` must be named (`--speaker A=NAME`), or the import stops.
 4. **Transcript.** The result is written as `transcript.txt` (`# source: screenshots`) in the episode's
    `import/` folder, then masked (phone numbers) and filtered (excluded people) like any other source.
 

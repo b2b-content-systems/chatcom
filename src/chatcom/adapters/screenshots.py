@@ -47,7 +47,11 @@ def load(paths: list[Path], ctx) -> tuple[ParseResult, str]:
     msgs = [{"sender": m["label"], "time": m["time"], "time_precision": m["time_precision"], "text": m["text"],
              "media": m["media"], "deleted": m["deleted"], "reactions": m["reactions"], "quote": m["quote"],
              "source": {"label": m["label"]}} for m in joined.messages]
-    text = transcript.write(msgs, ctx.tz, source="screenshots")
+    try:
+        text = transcript.write(msgs, ctx.tz, source="screenshots")
+    except ValueError as e:  # join() makes every name writable; this is a guard, not a path
+        raise ChatcomError("CHATCOM_E_USAGE", f"the screenshots could not be written as a transcript: {e}",
+                           "Name the speaker with --speaker LABEL=NAME, or run with --review.") from None
     path = work / "transcript.txt"
     store.write_atomic(path, text)
     store.write_atomic(work / "join.json", json.dumps({"reversed": joined.reversed, "seam_drops": joined.seam_drops,

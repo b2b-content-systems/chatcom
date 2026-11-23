@@ -79,13 +79,15 @@ def _reader(mode: str, replay_reads: str | None):
                        "in a later release.")
 
 
-def shot_context(opts: dict | None, mode: str, operator: str, workdir: Path) -> dict:
+def shot_context(opts: dict | None, mode: str, operator: str, workdir: Path, cache_dir: Path | None = None) -> dict:
     """The registry Context's `shots`: a reader for this mode and where the
     copies go. `opts` carries the CLI flags (speakers, reverse, anchor,
     max_images, replay_reads)."""
     opts = dict(opts or {})
-    return {"reader": _reader(mode, opts.pop("replay_reads", None)), "workdir": workdir, "operator": operator,
-            "cache_dir": store.home() / "cache" / "reads", **opts}
+    reader = _reader(mode, opts.pop("replay_reads", None))
+    # Recorded reads are never cached: a cache entry would outlive the file and could pose as a real read.
+    cache = None if reader.mode == "replay" else cache_dir
+    return {"reader": reader, "workdir": workdir, "operator": operator, "cache_dir": cache, **opts}
 
 
 def _parse_export(export, tz: str, aliases: dict, max_unparsed: float, log: store.RunLog,
@@ -176,7 +178,9 @@ def new_show(export, setup: dict, *, tz: str, max_unparsed: float = MAX_UNPARSED
             raise ChatcomError("CHATCOM_E_SHOW_EXISTS", f"a show '{setup['slug']}' already exists",
                                f"Make this week's episode with `chatcom episode {setup['slug']} --export <file>`, "
                                "or pass --show NEWSLUG.")
-        shot_ctx = shot_context(shots, writer, setup["operator_sender"], store.home() / "imports" / log.run_id)
+        work = store.home() / "imports" / log.run_id
+        # the read cache lives with the copies, so it moves into the show (or is removed) with them
+        shot_ctx = shot_context(shots, writer, setup["operator_sender"], work, work / "cache")
     try:
         return _new_show(exports, setup, tz, max_unparsed, log, key, source, thread, shot_ctx)
     except BaseException:
@@ -278,6 +282,26 @@ def check_exclusions_match(show: store.Show, setup: dict, res: ParseResult) -> N
                            context={"stale": stale, "current_labels": current})
 
 
+UNNAMED_LABEL = re.compile(r"^Speaker [A-Z]$")
+
+
+def check_screenshot_exclusions(setup: dict, res: ParseResult) -> None:
+    """Fail closed: in screenshots a person can be unnamed ("Speaker A") or
+    take the name above them, so with exclusions set, every speaker must be
+    named and every excluded name must be one this import found."""
+    exclude = setup.get("exclude", [])
+    if not exclude:
+        return
+    senders = set(res.senders())
+    unnamed = sorted(s for s in senders if UNNAMED_LABEL.match(s))
+    if unnamed:
+        raise ChatcomError("CHATCOM_E_SPEAKER_UNMAPPED",
+                           f"these screenshots have unnamed speakers ({', '.join(unnamed)}) and the show excludes "
+                           f"{', '.join(exclude)}", "Nothing was sent to the writer. Name each one for this import "
+                           "with --speaker A=NAME, so an excluded person cannot pass as Speaker A.",
+                           context={"unnamed": unnamed})
+
+
 def check_session_paths(show: store.Show, setup: dict, exports: list[str]) -> None:
     """In session mode the agent, not the operator, types the --export path. It
     may read only the export given at `new` or a file in the show's inbox, so
@@ -336,8 +360,8 @@ def ingest(show: store.Show, export, *, accepted: bool, mode: str, since: dateti
                                    f"Continue it with --export {want}, or pass --replace to start the import over."
                                    if want else "Pass --replace to start the import over.",
                                    context={"stage": prior["stage"], "transcript": want})
-        shot_ctx = (shot_context(shots, mode, bible["show"]["operator_sender"], show.episode_dir(code) / "import")
-                    if images else None)
+        shot_ctx = (shot_context(shots, mode, bible["show"]["operator_sender"], show.episode_dir(code) / "import",
+                                 show.dir / "cache" / "reads") if images else None)
         res, _ = _parse_export(exports, tz, setup.get("aliases", {}), max_unparsed, log, show, key=key,
                                source=source, thread=thread, shots=shot_ctx)
         if review and res.adapter == "screenshots" and res.artifacts.get("transcript"):
@@ -348,6 +372,8 @@ def ingest(show: store.Show, export, *, accepted: bool, mode: str, since: dateti
             log.write(f"{code}: screenshots read, stopped for review at {st['transcript']}")
             return Path(st["transcript"]), None, st
         check_exclusions_match(show, setup, res)
+        if res.adapter == "screenshots":
+            check_screenshot_exclusions(setup, res)
         win = window_ops.select(res.messages, bible_ops.last_cursor(bible), since=_aware(since, tz),
                                 until=_aware(until, tz), max_days=max_days, bottle=bottle,
                                 exclude=setup.get("exclude", []), aliases=setup.get("aliases"),
