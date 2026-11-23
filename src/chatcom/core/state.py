@@ -14,14 +14,18 @@ from __future__ import annotations
 
 from chatcom.core.errors import ChatcomError
 
-STAGES = ("ingested", "drafted", "cast", "rendered", "encoded", "committed")
+STAGES = ("copied", "read", "ingested", "drafted", "cast", "rendered", "encoded", "committed")
+IMPORTING = ("copied", "read")
 MAX_WRITER_ATTEMPTS = 3
 MAX_PREP_CYCLES = 3
 
 
-def new(code: str, window_entry: dict, mode: str, now: str) -> dict:
-    return {"episode": code, "stage": "ingested", "writer_mode": mode, "attempts": 0, "prep_cycles": 0,
-            "accepted_flow": {"writer": mode, "reader": None},
+def new(code: str, window_entry: dict | None, mode: str, now: str, *, stage: str = "ingested",
+        reader: str | None = None) -> dict:
+    if stage not in STAGES:
+        raise ValueError(stage)
+    return {"episode": code, "stage": stage, "writer_mode": mode, "attempts": 0, "prep_cycles": 0,
+            "accepted_flow": {"writer": mode, "reader": reader},
             "last_errors": None, "writer_model": None, "window": window_entry,
             "created": now, "updated": now}
 
@@ -90,6 +94,16 @@ def next_command(state: dict | None, slug: str) -> str:
     if state is None:
         return f"chatcom ingest {slug} --export <file>"
     stage = state["stage"]
+    if stage == "read" and state.get("transcript"):
+        # a runnable command; the CLI says to check the transcript first
+        import shlex
+        mode = state.get("writer_mode", "anthropic")
+        if mode == "session":
+            return f"chatcom ingest {slug} --export {shlex.quote(state['transcript'])} --accept-data-flow"
+        tail = f" --writer {mode}" + (" --replay <file>" if mode == "replay" else "")
+        return f"chatcom episode {slug} --export {shlex.quote(state['transcript'])}{tail}"
+    if stage in ("copied", "read"):
+        return f"chatcom {'ingest' if state.get('writer_mode') == 'session' else 'episode'} {slug} --export <file> --replace"
     if stage == "ingested":
         if state.get("writer_mode") == "session":
             return f"chatcom write-prep {slug}"

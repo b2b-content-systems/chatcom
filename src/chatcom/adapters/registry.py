@@ -33,6 +33,8 @@ class Context:
     aliases: dict = field(default_factory=dict)
     key: bytes | None = None
     thread: str | None = None
+    # screenshots only: reader, workdir, operator, speakers, reverse, anchor, max_images, cache_dir
+    shots: dict | None = None
 
 
 @dataclass
@@ -156,25 +158,19 @@ def load(exports: list[str] | str, ctx: Context, source: str | None = None) -> t
     """(parse result, display name for a default slug, adapter used)."""
     paths = expand([exports] if isinstance(exports, str) else list(exports))
     adapter = sniff(paths, source)
-    res, display = adapter.load(paths, ctx)
-    res.adapter = adapter.name
+    res, display = adapter.load(paths, ctx)  # each adapter names itself (a screenshots transcript stays screenshots)
     return res, display, adapter
 
 
 def _register_builtin() -> None:
-    from chatcom.adapters import telegram, transcript, whatsapp
+    from chatcom.adapters import screenshots, telegram, transcript, whatsapp
     register(Adapter("whatsapp", {"container": whatsapp.matches_container, "text": whatsapp.matches_text},
                      whatsapp.load))
     # The header tier is checked first in sniff(); a transcript has no other matcher.
     register(Adapter("transcript", {}, transcript.load))
     register(Adapter("telegram", {"container": telegram.matches_container}, telegram.load))
-    for name in ("screenshots",):
-        if name not in ADAPTERS:
-            register(Adapter(name, {}, _not_built, later=True))
-
-
-def _not_built(paths, ctx):  # pragma: no cover - guarded by _ready
-    raise AssertionError("not built")
+    # The images tier is checked in sniff(); screenshots have no other matcher.
+    register(Adapter("screenshots", {}, screenshots.load))
 
 
 _register_builtin()

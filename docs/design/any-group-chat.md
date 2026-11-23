@@ -272,17 +272,18 @@ cleared automatically, so there is no unlock command.
 <!-- check_spec:flags -->
 | Flag | Commands | Meaning | PR |
 |---|---|---|---|
-| `--accept-data-flow` | ingest, episode | answer the data-flow notice (`new` gains it in PR 4, for screenshots) | 1 |
+| `--accept-data-flow` | new, ingest, episode | answer the data-flow notice (on `new`, for screenshots) | 1 |
 | `--source` | new, ingest, episode | force the source adapter | 1 |
 | `--thread` | new, ingest, episode | pick one chat in a multi-chat export | 1 |
-| `--writer` | episode | `anthropic` or `replay` (the skill's `ingest` is always session mode); `new` gains it in PR 4 to pick the notice | shipped |
-| `--speaker` | ingest, read-submit | map a label for this import (`A=Mike`, `right=Dave`) | 4 |
-| `--reverse` | read-submit | images are newest first | 4 |
-| `--no-reverse` | read-submit | images are oldest first | 4 |
-| `--anchor-date` | read-submit | the date the first screenshot shows | 4 |
-| `--review` | read-submit | stop after `transcript.txt` | 4 |
-| `--replace` | ingest | start an import over | 4 |
+| `--writer` | new, episode | `anthropic` or `replay` (the skill's `ingest` is always session mode); on `new` it picks the screenshot reader and notice | shipped |
+| `--speaker` | new, ingest, episode | map a label for this import (`A=Mike`, `right=Dave`); read-submit gains it in PR 5 | 4 |
+| `--reverse` | new, episode | images are newest first; read-submit gains it in PR 5 | 4 |
+| `--no-reverse` | new, episode | images are oldest first; read-submit gains it in PR 5 | 4 |
+| `--anchor-date` | new, episode | the date the first screenshot shows; read-submit gains it in PR 5 | 4 |
+| `--review` | episode | stop after `transcript.txt`; read-submit gains it in PR 5 | 4 |
+| `--replace` | ingest, episode | start an import over | 4 |
 | `--max-images` | new, ingest, episode | cap on images or tiles (default 40) | 4 |
+| `--replay-reads` | new, episode | recorded screenshot reads for the ReplayReader (CI, the demo) | 4 |
 | `--reader-model` | episode | override the reader model | 6 |
 <!-- /check_spec:flags -->
 

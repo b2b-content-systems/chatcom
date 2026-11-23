@@ -3,7 +3,7 @@ caller needs to judge the parse (unparsed lines, format, group name)."""
 from __future__ import annotations
 
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 @dataclass
@@ -16,6 +16,7 @@ class ParseResult:
     group_name: str | None
     masked: dict[str, str]
     adapter: str = "whatsapp"
+    artifacts: dict = field(default_factory=dict)  # files an adapter wrote (screenshots: transcript.txt)
 
     @property
     def unparsed_rate(self) -> float:

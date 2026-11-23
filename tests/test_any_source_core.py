@@ -128,14 +128,16 @@ def test_sniff_accepts_a_large_export_whose_sample_cut_splits_a_character(tmp_pa
     assert registry.sniff([f]).name == "whatsapp"
 
 
-def test_sniff_names_sources_that_are_not_built_yet(tmp_path):
+def test_sniff_names_sources_that_are_not_built_yet(tmp_path, monkeypatch):
+    # every wave-1 source is built now; a registered-but-later adapter still refuses by name
+    monkeypatch.setitem(registry.ADAPTERS, "screenshots",
+                        registry.Adapter("screenshots", {}, registry.ADAPTERS["screenshots"].load, later=True))
     shots = tmp_path / "shots"
     shots.mkdir()
     (shots / "a.png").write_bytes(b"\x89PNG\r\n\x1a\n")
-    for paths in ([shots],):
-        with pytest.raises(ChatcomError) as e:
-            registry.sniff(paths)
-        assert e.value.code == "CHATCOM_E_SOURCE_UNKNOWN" and "not in this chatcom yet" in e.value.what
+    with pytest.raises(ChatcomError) as e:
+        registry.sniff([shots])
+    assert e.value.code == "CHATCOM_E_SOURCE_UNKNOWN" and "not in this chatcom yet" in e.value.what
 
 
 def test_two_matches_in_one_tier_are_ambiguous(monkeypatch, tmp_path):

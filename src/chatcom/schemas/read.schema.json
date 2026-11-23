@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/b2b-content-systems/chatcom/schemas/read.schema.json",
+  "title": "CHATCOM screenshot read",
+  "description": "What a reader returns for ONE screenshot (or tile): the rows top to bottom as they appear, the chat name from the header, and nothing else. Every reader (the session in skill mode, Gemini or Claude in CLI mode, the ReplayReader in CI) returns this shape; chatcom joins the images itself (docs/design/any-group-chat.md, Screenshots).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["chat_name", "rows"],
+  "properties": {
+    "chat_name": {"type": ["string", "null"], "maxLength": 200},
+    "rows": {
+      "type": "array",
+      "maxItems": 400,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["type", "text"],
+        "properties": {
+          "type": {"enum": ["message", "date"], "description": "date: a day separator such as 'Today', 'Monday' or 'Jan 9'; its text is the label."},
+          "side": {"enum": ["left", "right", null], "description": "right is the operator's own bubbles."},
+          "name": {"type": ["string", "null"], "maxLength": 80, "description": "The sender name shown above the bubble, if any."},
+          "text": {"type": "string", "maxLength": 20000},
+          "time": {"type": ["string", "null"], "maxLength": 20, "description": "The time shown on the bubble, as shown ('7:02 PM', '19:02')."},
+          "placeholder": {"enum": [null, "image", "video", "audio", "sticker", "gif", "document", "contact", "location", "poll", "other", "deleted"]},
+          "quote": {
+            "type": ["object", "null"],
+            "additionalProperties": false,
+            "required": ["sender", "text"],
+            "properties": {"sender": {"type": ["string", "null"], "maxLength": 80}, "text": {"type": "string", "maxLength": 4000}}
+          },
+          "reactions": {
+            "type": ["array", "null"],
+            "maxItems": 50,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["emoji", "count"],
+              "properties": {"emoji": {"type": "string", "maxLength": 32}, "sender": {"type": ["string", "null"], "maxLength": 80}, "count": {"type": "integer", "minimum": 1, "maximum": 999999}}
+            }
+          },
+          "partial": {"enum": [null, "top", "bottom"], "description": "The bubble is cut off by the top or bottom edge of the image."}
+        }
+      }
+    }
+  }
+}

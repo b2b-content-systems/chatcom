@@ -10,7 +10,7 @@ from jsonschema import Draft202012Validator, FormatChecker
 
 from chatcom.core.errors import ChatcomError
 
-NAMES = ("message", "bible", "beats", "setup", "cast")
+NAMES = ("message", "bible", "beats", "setup", "cast", "read")
 
 
 @lru_cache(maxsize=None)

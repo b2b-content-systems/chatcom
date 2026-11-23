@@ -52,20 +52,22 @@ def _invalid(line: int, what: str) -> ChatcomError:
                         context={"line": line})
 
 
-def valid_name(name: str) -> bool:
-    """A speaker name: what can stand before `: ` and read back the same."""
+def valid_name(name: str, strict: bool = False) -> bool:
+    """A speaker name: what can stand before `: ` and read back the same.
+    `strict` also refuses web address schemes ("https"), for guessing names
+    when there is no `# speakers:` line; a listed speaker may be "Signal"."""
     return (0 < len(name) <= MAX_NAME and name == normalize_text(name) and "\n" not in name
             and ": " not in name and not name.endswith(":") and not name.startswith(_STRUCTURE)
-            and not name.isdigit() and name.casefold() not in URL_SCHEMES)
+            and not name.isdigit() and not (strict and name.casefold() in URL_SCHEMES))
 
 
-def _split_name(s: str) -> tuple[str, str] | None:
+def _split_name(s: str, strict: bool = False) -> tuple[str, str] | None:
     """(name, text) when s starts with `Name: `, or is `Name:` alone."""
     i = s.find(": ")
     if i < 0:
-        return (s[:-1], "") if s.endswith(":") and valid_name(s[:-1]) else None
+        return (s[:-1], "") if s.endswith(":") and valid_name(s[:-1], strict) else None
     name, text = s[:i], s[i + 2:]
-    return (name, text) if valid_name(name) else None
+    return (name, text) if valid_name(name, strict) else None
 
 
 # ---- name lists (speakers header, reactions) --------------------------------
@@ -204,7 +206,7 @@ def _candidates(lines: list[str]) -> set[str]:
         if ln.startswith((" ", ">", "\\")):
             continue
         st = _STAMP.match(ln)
-        hit = _split_name(st[7] if st else ln)
+        hit = _split_name(st[7] if st else ln, strict=True)
         if hit:
             seen[hit[0]] += 1
     return {n for n, c in seen.items() if c >= 2}
@@ -385,7 +387,11 @@ def parse(text: str, tz_name: str, *, aliases: dict[str, list[str]] | None = Non
             "source": {"adapter": "transcript", "line": row.line, "label": label},
         })
     fmt = {"origin": origin or "", "speakers": "listed" if speakers else "inferred"}
-    return ParseResult(msgs, 0, unparsed, len(rows), fmt, None, masked, "transcript")
+    # A transcript chatcom wrote from screenshots keeps that as its source.
+    adapter = "screenshots" if origin == "screenshots" else "transcript"
+    for m in msgs:
+        m["source"]["adapter"] = adapter
+    return ParseResult(msgs, 0, unparsed, len(rows), fmt, None, masked, adapter)
 
 
 # ---- write ------------------------------------------------------------------------

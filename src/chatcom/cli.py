@@ -34,6 +34,43 @@ def _date(s: str) -> datetime:
     return dt  # without an offset, the show's timezone applies (app._aware)
 
 
+def _day(s: str):
+    try:
+        return datetime.strptime(s, "%Y-%m-%d").date()
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"expected YYYY-MM-DD: {s!r}") from None
+
+
+def _speaker(s: str) -> tuple[str, str]:
+    if "=" not in s:
+        raise argparse.ArgumentTypeError("expected LABEL=NAME, for example A=Mike or right=Dave")
+    label, name = (x.strip() for x in s.split("=", 1))
+    if not label or not name:
+        raise argparse.ArgumentTypeError("expected LABEL=NAME, for example A=Mike or right=Dave")
+    return label, name
+
+
+def _shot_flags(p: argparse.ArgumentParser, *, reading: bool) -> None:
+    """Screenshot flags. `reading`: the command reads images in CLI mode."""
+    p.add_argument("--speaker", action="append", type=_speaker, default=[], metavar="LABEL=NAME",
+                   help="screenshots: name a label for this import (A=Mike), or your own bubbles (right=Dave)")
+    p.add_argument("--max-images", type=int, default=40, help="screenshots: cap on images or tiles (default 40)")
+    if reading:
+        order = p.add_mutually_exclusive_group()
+        order.add_argument("--reverse", dest="reverse", action="store_const", const=True, default=None,
+                           help="screenshots: the images are newest first")
+        order.add_argument("--no-reverse", dest="reverse", action="store_const", const=False,
+                           help="screenshots: the images are oldest first")
+        p.add_argument("--anchor-date", type=_day, help="screenshots: the date the first screenshot shows (YYYY-MM-DD)")
+        p.add_argument("--replay-reads", help="screenshots: recorded reads (with --writer replay)")
+
+
+def _shots(args) -> dict:
+    return {"speakers": dict(args.speaker), "max_images": args.max_images,
+            "reverse": getattr(args, "reverse", None), "anchor": getattr(args, "anchor_date", None),
+            "replay_reads": getattr(args, "replay_reads", None)}
+
+
 def _pair(s: str) -> tuple[str, str]:
     if "=" not in s:
         raise argparse.ArgumentTypeError("expected NAME=PATH")
@@ -65,6 +102,11 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--tz")
     s.add_argument("--max-unparsed", type=float, default=app.MAX_UNPARSED)
     s.add_argument("--print-setup-template", action="store_true")
+    s.add_argument("--accept-data-flow", action="store_true",
+                   help="screenshots: the operator has read the data-flow notice and agrees")
+    s.add_argument("--writer", choices=["anthropic", "replay", "session"], default="anthropic",
+                   help="screenshots: the mode, which picks the reader and the notice")
+    _shot_flags(s, reading=True)
 
     for name, hlp in (("ingest", "(skill mode) step 1 prints the data-flow notice and exits 6; step 2 hands over messages"),
                       ("episode", "make this week's episode (this release stops after the writer: beats.json)")):
@@ -80,12 +122,17 @@ def build_parser() -> argparse.ArgumentParser:
         e.add_argument("--max-unparsed", type=float, default=app.MAX_UNPARSED)
         e.add_argument("--accept-data-flow", action="store_true",
                        help="the operator has read the data-flow notice and agrees")
+        e.add_argument("--replace", action="store_true",
+                       help="screenshots: start over an import that stopped at copied or read")
+        _shot_flags(e, reading=name == "episode")
         if name != "ingest":
             e.add_argument("--writer", choices=["anthropic", "replay", "session"], default="anthropic")
             e.add_argument("--writer-model", default=os.environ.get("CHATCOM_WRITER_MODEL"))
             e.add_argument("--replay", help="recorded writer responses (with --writer replay)")
             e.add_argument("--dry-run", action="store_true")
             e.add_argument("--token-budget", type=int, default=12_000)
+            e.add_argument("--review", action="store_true",
+                           help="screenshots: stop after transcript.txt so you can check it, then import that file")
 
     w = sub.add_parser("write-prep", help="(skill mode) write the writer bundle and print its path")
     w.add_argument("show", nargs="?")
@@ -156,7 +203,8 @@ def cmd_new(args) -> int:
             if t:
                 setup["title"] = t
     show, info = app.new_show(args.export, setup, tz=setup.get("timezone") or _local_tz(), max_unparsed=args.max_unparsed,
-                              source=args.source, thread=args.thread)
+                              source=args.source, thread=args.thread, accepted=args.accept_data_flow,
+                              writer=args.writer, shots=_shots(args))
     fmt = ", ".join(str(v) for v in info["format"].values() if v)
     lines = [f"show '{info['slug']}' created from {info['messages']} messages "
              f"({info['source']}: {fmt}; {info['unparsed_rate']:.1%} of lines unparsed)",
@@ -176,7 +224,8 @@ def cmd_ingest(args) -> int:
     show = app.resolve_show(args.show)
     path, win, st = app.ingest(show, args.export, accepted=args.accept_data_flow, mode="session", since=args.since,
                                until=args.until, bottle=args.bottle, max_days=args.max_days,
-                               max_unparsed=args.max_unparsed, source=args.source, thread=args.thread)
+                               max_unparsed=args.max_unparsed, source=args.source, thread=args.thread,
+                               replace=args.replace, shots=_shots(args))
     lines = [f"{st['episode']}: {len(win.messages)} messages from {win.start:%Y-%m-%d %H:%M} to {win.end:%Y-%m-%d %H:%M} "
              f"(source {st['source']}, resumed by {win.method}; {st['unparsed_rate']:.1%} of lines unparsed)"]
     if win.gap:
@@ -196,7 +245,8 @@ def cmd_episode(args) -> int:
     if args.dry_run:
         info = app.dry_run(show, args.export, since=args.since, until=args.until, bottle=args.bottle,
                            max_days=args.max_days, max_unparsed=args.max_unparsed, token_budget=args.token_budget,
-                           source=args.source, thread=args.thread, operator_typed=_tty())
+                           source=args.source, thread=args.thread, operator_typed=_tty(),
+                           max_images=args.max_images)
         print(json.dumps(info, indent=2, ensure_ascii=False))
         return 0
     if args.writer == "session":
@@ -209,6 +259,9 @@ def cmd_episode(args) -> int:
         writer = ReplayWriter(args.replay)
         confirmed = True
     else:
+        images = app.source_of(args.export, args.source) == "screenshots"
+        if images:
+            app.shot_context(_shots(args), "anthropic", "", Path("."))  # refuses until the CLI reader exists
         from chatcom.adapters.writers.anthropic import AnthropicWriter
         writer = AnthropicWriter(model=args.writer_model)
         confirmed = args.accept_data_flow
@@ -224,9 +277,16 @@ def cmd_episode(args) -> int:
             if not confirmed:
                 print("Stopped. Nothing left this computer.", file=sys.stderr)
                 return 0
-    _, win, _ = app.ingest(show, args.export, accepted=True, mode=writer.mode, since=args.since, until=args.until,
-                           bottle=args.bottle, max_days=args.max_days, max_unparsed=args.max_unparsed,
-                           source=args.source, thread=args.thread)
+    path, win, st = app.ingest(show, args.export, accepted=True, mode=writer.mode, since=args.since,
+                               until=args.until, bottle=args.bottle, max_days=args.max_days,
+                               max_unparsed=args.max_unparsed, source=args.source, thread=args.thread,
+                               replace=args.replace, review=args.review, shots=_shots(args))
+    if win is None:  # --review: stopped after transcript.txt
+        nxt = app.state_ops.next_command(st, show.slug)
+        emit(args, {"episode": st["episode"], "stage": st["stage"], "transcript": str(path), "next_command": nxt},
+             [f"{st['episode']}: screenshots read; check the transcript, fix any line, then run:", f"  {nxt}",
+              str(path)])
+        return 0
     if win.warning:
         print(f"warning {win.warning['code']}: {win.warning['what']}. fix: {win.warning['fix']}", file=sys.stderr)
     res = app.run_writer(show, writer, token_budget=args.token_budget)
