@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import re
 
-from chatcom.core import budget
+from chatcom.core import budget, render
 from chatcom.core.bible import current_code, episode_number
 from chatcom.core.schema import problems
 
@@ -73,6 +73,7 @@ def validate(beats, *, bible: dict, cast_sheet: dict, new_messages: int,
         limit = int(budget.seconds(n, seg) * budget.WORDS_PER_SECOND)
         if words > limit:
             err(path, f"{words} words do not read in {budget.seconds(n, seg):.1f} s; at most {limit}")
+    out.extend(render.fit_problems(beats, n))  # the render timeline's own fit rule, checked at write time
     if len(new_locs) > budget.MAX_NEW_LOCATIONS:
         err("$.scenes", f"{len(new_locs)} new locations; at most {budget.MAX_NEW_LOCATIONS} per episode, reuse a background")
 

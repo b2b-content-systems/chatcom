@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.1.0.dev9 (unreleased)
+
+Next Step 4, part 1: the render timeline.
+
+### Added
+- The episode timeline (`core/render.py`): every segment of the 60-second cut with its start and length, from the
+  same budget the writer is checked against; each bubble stays up long enough to read on a phone (between 1 and 4
+  seconds), a crowded scene shortens every hold by the same amount and never drops a bubble; "Previously on" recaps
+  the last finished episode. Nothing renders yet: this is the plan the video follows.
+
+### Changed
+- The script check now also refuses a scene whose bubbles cannot fit their time slot, so the writer retries at write
+  time instead of the render failing after casting.
+
 ## 0.1.0.dev8 (2026-11-23)
 
 Next Step 3, part 1: casting.
