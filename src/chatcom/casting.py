@@ -177,13 +177,7 @@ def _cast(show, painter, *, accepted, approve_calls, say):
     needed = {r[6:] for c in calls for r in c.refs if r.startswith("photo:")}
     photos = _photos(show, base, needed)
     pinned = base.get("image_model")
-    if pinned and (painter.mode == "replay") != (pinned == "replay-painter"):
-        raise ChatcomError("CHATCOM_E_USAGE", f"this show is cast with {pinned}; the {painter.mode} painter cannot "
-                           "add to it", "A show keeps one image model. Use the same painter as its first cast.",
-                           context={"image_model": pinned})
-    if pinned and painter.mode == "gemini" and getattr(painter, "requested", None) not in (None, pinned):
-        raise ChatcomError("CHATCOM_E_USAGE", f"this show is cast with {pinned}, not {painter.requested}",
-                           "A show keeps one image model: drop --image-model.", context={"image_model": pinned})
+    _check_painter(base, painter)
     models = [pinned] if pinned else ([painter.model] if painter.mode != "gemini" else
                                       [painter.model] + ([FALLBACK_MODEL] if painter.model != FALLBACK_MODEL else []))
     last_error = None
@@ -252,6 +246,7 @@ def recast(show: store.Show, painter, *, member: str | None = None, photo: str |
             state_ops.reopen_cast(st, store.now())  # raises with the fix
         bible_next = store.read_json(ep / "bible.next.json")
         sheet = _reset(copy.deepcopy(base), bible_next["cast"], member, photo, no_photo)
+        _check_painter(sheet, painter)  # before anything is written: a refusal leaves the episode as it was
         n = len(plan_for(show, bible_next, sheet, store.read_json(ep / "beats.json")))
         what = f"--member {_quote(member)}" + (f" --photo {_quote(photo)}" if photo else "") + \
                (" --no-photo" if no_photo else "") if member else ""
@@ -268,6 +263,18 @@ def recast(show: store.Show, painter, *, member: str | None = None, photo: str |
         store.write_json(nxt_path, sheet)
         store.write_json(show.state_path(code), state_ops.reopen_cast(st, store.now()))
         return _cast(show, painter, accepted=True, approve_calls=n, say=say)
+
+
+def _check_painter(sheet: dict, painter) -> None:
+    """A show keeps one image model: refuse a painter or --image-model that differs from the pinned one."""
+    pinned = sheet.get("image_model")
+    if pinned and (painter.mode == "replay") != (pinned == "replay-painter"):
+        raise ChatcomError("CHATCOM_E_USAGE", f"this show is cast with {pinned}; the {painter.mode} painter cannot "
+                           "add to it", "A show keeps one image model. Use the same painter as its first cast.",
+                           context={"image_model": pinned})
+    if pinned and painter.mode == "gemini" and getattr(painter, "requested", None) not in (None, pinned):
+        raise ChatcomError("CHATCOM_E_USAGE", f"this show is cast with {pinned}, not {painter.requested}",
+                           "A show keeps one image model: drop --image-model.", context={"image_model": pinned})
 
 
 def _quote(text: str) -> str:
