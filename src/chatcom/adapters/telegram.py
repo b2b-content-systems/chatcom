@@ -109,14 +109,16 @@ def _chat_label(c: dict) -> str:
     return str(c.get("name") or f"chat {c.get('id', '?')}")
 
 
-def pick_chat(doc: dict, thread: str | None) -> dict:
+def pick_chat(doc: dict, thread: str | None, *, amap: dict | None = None, key: bytes | None = None) -> dict:
     chats = _chats(doc)
     if not chats:
         raise ChatcomError("CHATCOM_E_EMPTY_EXPORT", "this Telegram export holds no chat with messages",
                            "Export the chat again with its messages (docs/telegram-export.md).")
     if thread is None and len(chats) == 1:
         return chats[0]
-    names = [_chat_label(c) for c in chats]
+    # Chat names are listed to whoever runs the command (an agent, in skill
+    # mode): a personal chat is named after a contact, so numbers are masked.
+    names = [mask_numbers(normalize_text(_chat_label(c)), amap or {}, key) for c in chats]
     if thread is not None:
         want = thread.casefold()
         hits = [c for c in chats if _chat_label(c).casefold() == want or str(c.get("id")) == thread]
@@ -130,7 +132,9 @@ def pick_chat(doc: dict, thread: str | None) -> dict:
     raise ChatcomError("CHATCOM_E_THREAD_REQUIRED", what,
                        f"Pass --thread with one of: {', '.join(shown)}{more}. Two chats with one name: pass its id "
                        "instead.",
-                       context={"chats": [{"name": _chat_label(c), "id": c.get("id")} for c in chats]})
+                       context={"chats": [{"name": n, "id": c.get("id")}
+                                          for n, c in list(zip(names, chats))[:MAX_THREADS_LISTED]],
+                                "chat_count": len(chats)})
 
 
 # ---- parsing ----------------------------------------------------------------------
@@ -181,8 +185,8 @@ def parse(doc: dict, tz_name: str, *, aliases: dict[str, list[str]] | None = Non
     except Exception:
         raise ChatcomError("CHATCOM_E_TIMEZONE", f"unknown timezone {tz_name!r}",
                            "Pass an IANA zone with --tz, for example --tz America/New_York.") from None
-    chat = pick_chat(doc, thread)
     amap = alias_map(aliases or {})
+    chat = pick_chat(doc, thread, amap=amap, key=key)
     masked: dict[str, str] = {}
 
     def who(n: str) -> str:
@@ -232,7 +236,9 @@ def parse(doc: dict, tz_name: str, *, aliases: dict[str, list[str]] | None = Non
             if rest > 0:
                 reactions.append({"emoji": emoji, "sender": None, "count": rest})
         reply_to, quote = None, None
-        target = by_tg.get(m.get("reply_to_message_id"))
+        peer = m.get("reply_to_peer_id")
+        # a reply to a message in another chat can share an id with one here
+        target = by_tg.get(m.get("reply_to_message_id")) if peer in (None, chat.get("id")) else None
         if target is not None:
             reply_to = target["id"]
             quote = {"sender": target["sender"], "text": target["text"][:QUOTE_CHARS]}

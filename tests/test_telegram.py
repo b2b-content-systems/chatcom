@@ -214,3 +214,62 @@ def test_an_account_export_in_the_cli_asks_for_a_thread(capsys, chatcom_home, no
     code, out, err = run(capsys, "--json", "new", str(ACCOUNT), "--thread", "Lake House Boys", "--operator", "Dave",
                          "--tz", TZ)
     assert code == 0, err
+
+
+# ---- review notes (PR 3) -------------------------------------------------------------------
+# Value: protects=the chat list an agent sees has no phone numbers, duplicate names need an id, error branches
+# report the right code; fails_when=names go out raw or the wrong chat is read; why_new=PR 3 review; seam=none;
+# no_claim=chat names the masking module does not recognise as numbers
+
+def _account(tmp_path, edit):
+    doc = json.loads((ACCOUNT / "result.json").read_text("utf-8"))
+    edit(doc)
+    d = tmp_path / "acct"
+    d.mkdir()
+    (d / "result.json").write_text(json.dumps(doc), "utf-8")
+    return d
+
+
+def test_the_chat_list_masks_phone_numbers(tmp_path):
+    d = _account(tmp_path, lambda doc: doc["chats"]["list"][1].update(name="+1 555 010 2299"))
+    with pytest.raises(ChatcomError) as e:
+        load(d)
+    assert "2299" not in e.value.fix and "2299" not in json.dumps(e.value.context)
+
+
+def test_two_chats_with_one_name_need_an_id(tmp_path):
+    def same(doc):
+        doc["chats"]["list"][1]["name"] = doc["chats"]["list"][0]["name"]
+    d = _account(tmp_path, same)
+    with pytest.raises(ChatcomError) as e:
+        load(d, thread="Lake House Boys")
+    assert "2 chats are named" in e.value.what
+    assert len(load(d, thread="4400777").messages) == 2 and len(load(d, thread="4400123").messages) == 10
+
+
+def test_a_reply_into_another_chat_is_not_linked():
+    doc = json.loads((CHAT / "result.json").read_text("utf-8"))
+    doc["messages"][4]["reply_to_peer_id"] = 999
+    res = TG.parse(doc, TZ, key=UNKEYED)
+    assert res.messages[3]["reply_to"] is None and res.messages[3]["quote"] is None
+
+
+def test_error_branches(tmp_path):
+    doc = json.loads((CHAT / "result.json").read_text("utf-8"))
+    for k in ("date", "date_unixtime"):
+        doc["messages"][1].pop(k)
+    res = TG.parse(doc, TZ, key=UNKEYED)
+    assert res.unparsed == [(2, "message 2 has no readable date")]
+    with pytest.raises(ChatcomError) as e:
+        TG.parse({"about": "x", "personal_information": {}, "chats": {"list": []}}, TZ)
+    assert e.value.code == "CHATCOM_E_EMPTY_EXPORT"
+    with pytest.raises(ChatcomError) as e:
+        TG.parse(doc, "Mars/Olympus")
+    assert e.value.code == "CHATCOM_E_TIMEZONE"
+
+
+def test_the_size_cap_is_enforced_on_the_bytes_read(tmp_path, monkeypatch):
+    monkeypatch.setattr(TG, "MAX_BYTES", 100)
+    with pytest.raises(ChatcomError) as e:
+        TG.load([CHAT], registry.Context(tz=TZ))
+    assert e.value.code == "CHATCOM_E_EXPORT_UNREADABLE" and "limit" in e.value.what
