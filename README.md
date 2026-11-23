@@ -97,7 +97,7 @@ how many it made (`calls_billed`). The limits:
 | --- | --- |
 | Reading screenshots | 3 tries per image, 3 at a time, 40 images per import (`--max-images` raises it) |
 | Writing an episode | 3 attempts per prep, 3 preps per episode |
-| Casting | You approve the exact number of image calls first. A 5-person cast is 35 for the first episode (6 poses each, the style frame, the sets); later episodes at most 2 new sets. A recast is 6 calls per member |
+| Casting | You approve the exact number of image calls first. A 5-person cast is 35 for the first episode (6 poses each, the style frame, the sets); later episodes at most 2 new sets. Recasting one member is 6 calls; recasting the whole show is the style frame, 6 per member and every set |
 | Re-runs | Reads are cached in the show, so the same screenshots are never paid for twice |
 
 ## Commands

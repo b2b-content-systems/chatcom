@@ -6,7 +6,7 @@ CHATCOM's memory is plain JSON the group owns. The schemas are JSON Schema (draf
 |---|---|---|
 | `messages.jsonl` | [message](../src/chatcom/schemas/message.schema.json) | one normalized message per line, from any adapter |
 | `bible.json` | [bible](../src/chatcom/schemas/bible.schema.json) | show, cast (up to 8), chorus, running-joke ledger, storylines, episode log with the window cursor |
-| `cast.json` | [cast](../src/chatcom/schemas/cast.schema.json) | pinned image model, pose vocabulary, pose sets, background library |
+| `cast.json` | [cast](../src/chatcom/schemas/cast.schema.json) | pinned image model, pose vocabulary, pose sets, background library, recast takes (`take`, `take_id`) |
 | `beats.json` | [beats](../src/chatcom/schemas/beats.schema.json) | the writer's output for one episode, plus its bible update |
 | `setup.json` | [setup](../src/chatcom/schemas/setup.schema.json) | first-run answers ([example](../examples/setup.json)) |
 
