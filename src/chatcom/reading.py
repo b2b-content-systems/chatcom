@@ -159,7 +159,11 @@ def submit(t: Target, doc, *, model: str, opts: dict, draft: Path | None = None)
                            recovery="ask", context={"accepted": accepted, "requested": SESSION_READER})
     rs = st["reader"]
     if rs["attempts"] >= MAX_READ_ATTEMPTS:
-        raise gave_up(rs, str(draft) if draft else None)
+        if rs["cycles"] >= MAX_READ_CYCLES:
+            raise gave_up(rs, str(draft) if draft else None)
+        raise ChatcomError("CHATCOM_E_READ_INVALID", f"this read-prep has used its {MAX_READ_ATTEMPTS} submits",
+                           f"Run `chatcom read-prep {t.arg}` for a fresh try at this batch.",
+                           context={"problems": rs.get("last_errors") or [], "attempts_left": 0})
     errs = _problems(doc, rs["batch"])
     if errs:
         rs = {**rs, "attempts": rs["attempts"] + 1, "last_errors": errs[:50]}

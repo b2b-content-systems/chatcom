@@ -508,3 +508,12 @@ def test_past_midnight_without_a_header_is_the_next_day():
     rows = [{"type": "date", "text": "Today"}, row("late", name="Mike", time="23:50"), row("later", time="00:10")]
     m = S.join([img("1", rows)], tz=NY, operator="Dave").messages
     assert m[0]["time"].startswith("2026-01-09T23:50") and m[1]["time"].startswith("2026-01-10T00:10")
+
+
+
+def test_a_header_between_rows_blocks_the_midnight_roll():
+    rows = [{"type": "date", "text": "Today"}, row("a", name="Mike", time="23:50"), {"type": "date", "text": "Today"},
+            row("b", time="00:10")]
+    with pytest.raises(ChatcomError) as e:
+        S.join([img("1", rows)], tz=NY, operator="Dave")
+    assert "out of order" in e.value.what

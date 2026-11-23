@@ -165,6 +165,10 @@ def new_show(export, setup: dict, *, tz: str, max_unparsed: float = MAX_UNPARSED
     log = store.RunLog(None, f"new {Path(exports[0]).name}")
     key = store.new_key()
     shot_ctx = None
+    if setup.get("slug") and store.Show(setup["slug"]).exists():  # refuse before copying or reading anything
+        raise ChatcomError("CHATCOM_E_SHOW_EXISTS", f"a show '{setup['slug']}' already exists",
+                           f"Make this week's episode with `chatcom episode {setup['slug']} --export <file>`, "
+                           "or pass --show NEWSLUG.")
     if source_of(exports, source) == "screenshots" and writer == "session":
         # skill mode: copy now, the session reads them, the transcript makes the show
         if not accepted:
@@ -183,10 +187,6 @@ def new_show(export, setup: dict, *, tz: str, max_unparsed: float = MAX_UNPARSED
             raise ChatcomError("CHATCOM_E_AWAITING_CONFIRMATION", text,
                                "Ask the operator. If they agree, run the same command with --accept-data-flow.",
                                recovery="ask", context={"mode": writer, "notice": text})
-        if setup.get("slug") and store.Show(setup["slug"]).exists():  # refuse before reading anything
-            raise ChatcomError("CHATCOM_E_SHOW_EXISTS", f"a show '{setup['slug']}' already exists",
-                               f"Make this week's episode with `chatcom episode {setup['slug']} --export <file>`, "
-                               "or pass --show NEWSLUG.")
         work = store.home() / "imports" / log.run_id
         # the read cache lives with the copies, so it moves into the show (or is removed) with them
         shot_ctx = shot_context(shots, writer, setup["operator_sender"], work, work / "cache")
@@ -198,6 +198,17 @@ def new_show(export, setup: dict, *, tz: str, max_unparsed: float = MAX_UNPARSED
             import shutil
             shutil.rmtree(shot_ctx["workdir"], ignore_errors=True)
         raise
+
+
+def _pending_dir(exports: list) -> Path | None:
+    """The pending import folder when the export is its transcript."""
+    if len(exports) != 1:
+        return None
+    p = Path(exports[0]).expanduser().resolve()
+    root = (store.home() / "imports").resolve()
+    if p.name == "transcript.txt" and p.parent.parent == root and (p.parent / "import.json").is_file():
+        return p.parent
+    return None
 
 
 def _new_show(exports, setup, tz, max_unparsed, log, key, source, thread, shot_ctx):
@@ -229,12 +240,18 @@ def _new_show(exports, setup, tz, max_unparsed, log, key, source, thread, shot_c
                                 aliases=setup.get("aliases"))
     sheet = bible_ops.new_cast_sheet(bible, photos)
     show.create_dirs()
+    export_paths = [str(Path(e).expanduser().resolve()) for e in exports]
     if shot_ctx is not None:  # the copies and the transcript move in with the show
         dest = show.dir / "imports" / log.run_id
         dest.parent.mkdir(parents=True, exist_ok=True)
         Path(shot_ctx["workdir"]).rename(dest)
+    pending = _pending_dir(exports)
+    if pending is not None:  # a skill-mode import's transcript: its copies and reads move in too
+        dest = show.dir / "imports" / pending.name
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        pending.rename(dest)
+        export_paths = [str(dest / "transcript.txt")]
     with show.lock():
-        export_paths = [str(Path(e).expanduser().resolve()) for e in exports]
         store.write_json(show.setup_path, {**setup, "slug": slug, "exclude": exclude, "export_paths": export_paths})
         store.write_json(show.cast_path, sheet)
         store.write_json(show.bible_path, bible)
