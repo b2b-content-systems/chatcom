@@ -50,8 +50,11 @@ OUTFIT = ("a mustard-yellow", "a navy-blue", "a forest-green", "a burgundy", "a 
 
 
 def look_hint(index: int) -> str:
-    return (f"{HAIR[index % len(HAIR)]}, {BUILD[(index * 3) % len(BUILD)]}, wearing "
-            f"{OUTFIT[(index * 5) % len(OUTFIT)]} top")
+    """Distinct for the first 256 members. The prompt never names a member, so two sparse members with the same
+    hint would get the same content key and share one drawing. The first 8 hints never change (cache keys)."""
+    h, b, o = len(HAIR), len(BUILD), len(OUTFIT)
+    return (f"{HAIR[index % h]}, {BUILD[(index * 3 + index // h) % b]}, wearing "
+            f"{OUTFIT[(index * 5 + index // (h * b)) % o]} top")
 
 
 @dataclass

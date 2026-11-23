@@ -9,7 +9,9 @@ Next Step 3, part 1: casting.
   facepalm, shrug), a style frame for the look, and the sets (3 starters, up to 2 new locations per episode). Members
   with a reference photo are drawn from it; the rest are original characters from how they text, never a guess at a
   real face, and never sent a name.
-- Consent and spend: the notice says what goes to Google; `--approve-calls N` must equal the planned count.
+- Consent and spend: the notice says what goes to Google; `--approve-calls N` must equal the planned count, and it is
+  a hard cap on billed calls (a cut-off retry, a model switch or a refused photo cannot go past it). Calls that fail
+  before billing are not counted. Every billed call goes to the run ledger, even when casting stops.
 - `gemini-nano-banana-2.1` by default, `gemini-3.1-flash-image` as the fallback; a show keeps one model. A model that is
   gone or keeps failing moves the whole batch; a quota stop keeps what was drawn; a refused photo casts that member from
   how they text.

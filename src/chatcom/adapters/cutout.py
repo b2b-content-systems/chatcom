@@ -23,9 +23,12 @@ def _ffmpeg() -> str:
 
 def corner_colour(src: Path) -> str:
     """The average colour of the top-left 8x8 pixels, as 0xRRGGBB."""
-    out = subprocess.run([_ffmpeg(), "-nostdin", "-v", "error", "-i", str(src), "-vf", "crop=8:8:0:0,scale=1:1",
-                          "-f", "rawvideo", "-pix_fmt", "rgb24", "-"], capture_output=True, check=True).stdout
-    return "0x" + out[:3].hex()
+    r = subprocess.run([_ffmpeg(), "-nostdin", "-v", "error", "-i", str(src), "-vf", "crop=8:8:0:0,scale=1:1",
+                        "-f", "rawvideo", "-pix_fmt", "rgb24", "-"], capture_output=True)
+    if r.returncode != 0 or len(r.stdout) < 3:
+        raise ChatcomError("CHATCOM_E_IMAGE_UNREADABLE", f"{src.name}: the drawing could not be read",
+                           "Run `chatcom cast` again; the image is drawn again.", context={"image": src.name})
+    return "0x" + r.stdout[:3].hex()
 
 
 def key(src: Path, dst: Path) -> Path:

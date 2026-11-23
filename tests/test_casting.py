@@ -216,7 +216,12 @@ def test_a_refused_photo_is_cast_from_behavior(lake_show, tmp_path, beats_s01e01
     n = len(casting.plan_for(lake_show, json.loads((lake_show.episode_dir("S01E01") / "bible.next.json").read_text()),
                              json.loads(lake_show.cast_path.read_text()),
                              json.loads((lake_show.episode_dir("S01E01") / "beats.json").read_text())))
-    res = casting.cast(lake_show, ReplayPainter(refuse_photos=True), accepted=True, approve_calls=n, say=said.append)
+    painter = ReplayPainter(refuse_photos=True)
+    with pytest.raises(ChatcomError) as e:  # the refusal and the redraw from behavior cost 1 more than approved
+        casting.cast(lake_show, painter, accepted=True, approve_calls=n, say=said.append)
+    assert e.value.code == "CHATCOM_E_AWAITING_CONFIRMATION" and painter.calls == n
+    res = casting.cast(lake_show, painter, accepted=True, approve_calls=n, say=said.append)  # the rerun: cache
+    assert painter.calls == n + 1  # only the one image the first run could not afford
     assert res["refused"] == ["Mike"] and any("declined Mike" in s for s in said)
     nxt = json.loads(Path(res["cast_next"]).read_text("utf-8"))
     mike = next(m for m in nxt["members"] if m["name"] == "Mike")
@@ -245,7 +250,9 @@ def test_a_gone_model_moves_the_whole_batch_to_the_fallback(lake_show, tmp_path,
     ep = lake_show.episode_dir("S01E01")
     n = len(casting.plan_for(lake_show, json.loads((ep / "bible.next.json").read_text()),
                              json.loads(lake_show.cast_path.read_text()), json.loads((ep / "beats.json").read_text())))
-    res = casting.cast(lake_show, GeminiPainter(transport=t), accepted=True, approve_calls=n, say=lambda m: None)
+    p = GeminiPainter(transport=t)
+    res = casting.cast(lake_show, p, accepted=True, approve_calls=n, say=lambda m: None)
+    assert p.calls == n  # the 404 was not billed
     assert res["model"] == "gemini-3.1-flash-image" and used[0] == "gemini-nano-banana-2.1"
     assert set(used[1:]) == {"gemini-3.1-flash-image"}
     nxt = json.loads(Path(res["cast_next"]).read_text("utf-8"))
@@ -276,3 +283,113 @@ def test_a_cut_off_image_is_retried_with_more_room_and_every_call_is_counted(mon
         return replies.pop(0)
     p = GeminiPainter(transport=t)
     assert p.paint("draw", [], "3:4").data and p.calls == 2 and seen[1] > seen[0]
+
+
+
+# ---- the approved count is a hard cap (review: money) --------------------------------------------
+
+@needs_ffmpeg
+def test_billed_calls_never_exceed_the_approved_count(lake_show, tmp_path, beats_s01e01, capsys, not_a_tty,
+                                                      monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "k")
+    drafted(capsys, lake_show, tmp_path, beats_s01e01)
+    replay = ReplayPainter()
+    hits, billed = [], []
+
+    def t(url, headers, payload):
+        hits.append(1)
+        model = url.split("/models/")[1].split(":")[0]
+        if model == "gemini-nano-banana-2.1" and len(hits) > 3:
+            return 404, {"error": {"message": "gone"}}  # a switch after 3 paid calls: the batch would restart
+        billed.append(1)
+        prompt = payload["contents"][0]["parts"][-1]["text"]
+        data = replay.paint(prompt, [], "3:4").data
+        return 200, {"candidates": [{"content": {"parts": [{"inlineData": {"mimeType": "image/png",
+                     "data": base64.b64encode(data).decode()}}]}, "finishReason": "STOP"}]}
+    ep = lake_show.episode_dir("S01E01")
+    n = len(casting.plan_for(lake_show, json.loads((ep / "bible.next.json").read_text()),
+                             json.loads(lake_show.cast_path.read_text()), json.loads((ep / "beats.json").read_text())))
+    p = GeminiPainter(transport=t)
+    with pytest.raises(ChatcomError) as e:
+        casting.cast(lake_show, p, accepted=True, approve_calls=n, say=lambda m: None)
+    assert e.value.code == "CHATCOM_E_AWAITING_CONFIRMATION" and e.value.side_effects == "partial"
+    assert p.calls == len(billed) <= n  # answered calls are billed and capped; the 404s were not billed
+    st = json.loads(lake_show.state_path("S01E01").read_text("utf-8"))
+    assert st["image_calls"] == p.calls and st["stage"] == "drafted"  # the ledger is written even on a stop
+
+
+@needs_ffmpeg
+def test_a_quota_stop_still_records_the_calls_it_paid_for(lake_show, tmp_path, beats_s01e01, capsys, not_a_tty,
+                                                          monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "k")
+    drafted(capsys, lake_show, tmp_path, beats_s01e01)
+    replay = ReplayPainter()
+    hits = []
+
+    def t(url, headers, payload):
+        hits.append(1)
+        if len(hits) > 2:
+            return 429, {}
+        data = replay.paint(payload["contents"][0]["parts"][-1]["text"], [], "3:4").data
+        return 200, {"candidates": [{"content": {"parts": [{"inlineData": {"mimeType": "image/png",
+                     "data": base64.b64encode(data).decode()}}]}, "finishReason": "STOP"}]}
+    ep = lake_show.episode_dir("S01E01")
+    n = len(casting.plan_for(lake_show, json.loads((ep / "bible.next.json").read_text()),
+                             json.loads(lake_show.cast_path.read_text()), json.loads((ep / "beats.json").read_text())))
+    p = GeminiPainter(transport=t)
+    p.backoff = (0,)
+    with pytest.raises(ChatcomError) as e:
+        casting.cast(lake_show, p, accepted=True, approve_calls=n, say=lambda m: None)
+    assert e.value.code == "CHATCOM_E_PAINTER_UNAVAILABLE"
+    assert json.loads(lake_show.state_path("S01E01").read_text("utf-8"))["image_calls"] == p.calls == 2
+
+
+
+# ---- casting review fixes -----------------------------------------------------------------------
+
+def test_a_new_location_in_the_cold_open_is_drawn():
+    beats = {"cold_open": {"background": "pier", "new_location": {"id": "pier", "description": "a pier"}},
+             "scenes": [{"background": "lake", "new_location": {"id": "lake", "description": "a lake"}}]}
+    assert [l["id"] for l in casting.new_locations(beats)] == ["pier", "lake"]
+
+
+@needs_ffmpeg
+def test_the_replay_painter_never_adds_to_a_show_cast_with_gemini(lake_show, tmp_path, beats_s01e01, capsys,
+                                                                  not_a_tty):
+    drafted(capsys, lake_show, tmp_path, beats_s01e01)
+    cast = json.loads(lake_show.cast_path.read_text("utf-8"))
+    cast["image_model"] = "gemini-nano-banana-2.1"
+    lake_show.cast_path.write_text(json.dumps(cast), "utf-8")
+    ep = lake_show.episode_dir("S01E01")
+    n = len(casting.plan_for(lake_show, json.loads((ep / "bible.next.json").read_text()), cast,
+                             json.loads((ep / "beats.json").read_text())))
+    with pytest.raises(ChatcomError) as e:
+        casting.cast(lake_show, ReplayPainter(), accepted=True, approve_calls=n, say=lambda m: None)
+    assert e.value.code == "CHATCOM_E_USAGE" and not (lake_show.dir / "cache" / "images").exists()
+
+
+def test_an_invalid_key_says_check_the_key(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "k")
+    p = GeminiPainter(transport=lambda u, h, pl: (400, {"error": {"message": "API key not valid. API_KEY_INVALID"}}))
+    with pytest.raises(ChatcomError) as e:
+        p.paint("draw", [], "3:4")
+    assert "GEMINI_API_KEY" in e.value.fix and "bug" not in e.value.fix and p.calls == 0
+
+
+def test_an_unreadable_drawing_is_a_coded_error(tmp_path):
+    bad = tmp_path / "x.png"
+    bad.write_bytes(b"not an image")
+    with pytest.raises(ChatcomError) as e:
+        cutout.corner_colour(bad)
+    assert e.value.code == "CHATCOM_E_IMAGE_UNREADABLE"
+
+
+def test_look_hints_stay_distinct_past_eight_members():
+    from chatcom.core import casting as rules
+    hints = [rules.look_hint(i) for i in range(256)]
+    assert len(set(hints)) == 256
+    sparse = {"name": "x", "source": "behavior"}
+    calls = rules.plan({"members": [], "backgrounds": [], "style_sheet": "s.png"},
+                       [dict(sparse, name=f"m{i}") for i in range(9)], "sitcom", None)
+    neutral = [c for c in calls if c.pose == "neutral"]
+    assert len({rules.content_key("m", c, []) for c in neutral}) == 9

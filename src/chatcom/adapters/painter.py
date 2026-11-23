@@ -29,7 +29,12 @@ FALLBACK_MODEL = "gemini-3.1-flash-image"
 RETRIES = (2.0, 6.0, 15.0)
 MAX_TOKENS = 16384      # Nano Banana 2.1 thinks before it draws; 4096 cut it off (live, 2026-11-23)
 MAX_TOKENS_RETRY = 32768
+_ACCOUNT = re.compile(r"API_KEY_INVALID|API key not valid|billing|permission_denied", re.I)
 _QUOTA = re.compile(r"\(429\)|quota|RESOURCE_EXHAUSTED", re.I)
+
+
+class BudgetSpent(Exception):
+    """The next call would go over the number of calls the operator approved."""
 
 
 class SwitchModel(Exception):
@@ -48,10 +53,12 @@ class GeminiPainter:
     mode = "gemini"
 
     def __init__(self, model: str | None = None, transport=None):
+        self.requested = model
         self.model = model or DEFAULT_MODEL
         self.transport = transport or lf.http_transport
         self.backoff = RETRIES
         self.calls = 0
+        self.budget: int | None = None  # set by the caller to the approved count; never exceeded
         self._lock = threading.Lock()
 
     def paint(self, prompt: str, refs: list[tuple[bytes, str]], aspect: str) -> Painted:
@@ -67,12 +74,18 @@ class GeminiPainter:
     def _ask(self, prompt: str, refs: list[tuple[bytes, str]], aspect: str, max_tokens: int) -> lf.Answer:
         images = [lf.Image(d, m) for d, m in refs]
         for wait in (*self.backoff, None):
+            with self._lock:  # reserve the call before it is made, so the approved count is a hard cap
+                if self.budget is not None and self.calls >= self.budget:
+                    raise BudgetSpent(self.calls)
+                self.calls += 1
             try:
-                ans = lf.ask_gemini(prompt, model=self.model, images=images, output="image", aspect_ratio=aspect,
-                                    max_tokens=max_tokens, transport=self.transport)
-                with self._lock:
-                    self.calls += 1  # every answered call is billed, whatever happens to the batch
-                return ans
+                try:
+                    return lf.ask_gemini(prompt, model=self.model, images=images, output="image",
+                                         aspect_ratio=aspect, max_tokens=max_tokens, transport=self.transport)
+                except (lf.ModelGone, lf.Unavailable, lf.BadRequest):
+                    with self._lock:
+                        self.calls -= 1  # an error is not billed: hand the reserved call back
+                    raise
             except lf.ModelGone as e:
                 raise SwitchModel(redact(str(e))[:200]) from None
             except lf.Unavailable as e:
@@ -86,7 +99,12 @@ class GeminiPainter:
                     raise SwitchModel(msg[:200]) from None
                 time.sleep(wait)
             except lf.BadRequest as e:
-                raise ChatcomError("CHATCOM_E_PAINTER_UNAVAILABLE", redact(str(e))[:300],
+                msg = redact(str(e))
+                if _ACCOUNT.search(msg):  # an invalid key or billing problem answers 400, not 401
+                    raise ChatcomError("CHATCOM_E_PAINTER_UNAVAILABLE", f"the image model refused the key: {msg[:200]}",
+                                       "Check GEMINI_API_KEY and its billing, then run `chatcom cast` again.",
+                                       recovery="retry", context={"model": self.model}) from None
+                raise ChatcomError("CHATCOM_E_PAINTER_UNAVAILABLE", msg[:300],
                                    "This is a chatcom bug: report it with the run log.", recovery="ask",
                                    context={"model": self.model}) from None
         raise AssertionError("unreachable")  # pragma: no cover
@@ -102,8 +120,11 @@ class ReplayPainter:
         self.model = "replay-painter"
         self.refuse_photos = refuse_photos
         self.calls = 0
+        self.budget: int | None = None
 
     def paint(self, prompt: str, refs: list[tuple[bytes, str]], aspect: str) -> Painted:
+        if self.budget is not None and self.calls >= self.budget:
+            raise BudgetSpent(self.calls)
         self.calls += 1
         if self.refuse_photos and "reference photo" in prompt:
             return Painted(None, "", self.model, refused=True)
