@@ -374,6 +374,8 @@ def cmd_read_submit(args) -> int:
     except json.JSONDecodeError as e:
         doc = None
         print(f"warning: {p.name} is not JSON (line {e.lineno}: {e.msg})", file=sys.stderr)
+    if len(args.model) > 100:
+        raise ChatcomError("CHATCOM_E_USAGE", "--model is over 100 characters", "Pass the model id, for example claude-opus-5-5.")
     res = app.read_submit(show, doc, model=args.model, opts=_shots(args), import_id=args.import_id,
                           review=args.review, draft=p)
     if not res["done"]:

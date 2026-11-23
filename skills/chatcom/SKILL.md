@@ -61,7 +61,8 @@ For screenshots (Signal, iMessage, Discord, any app), the export is the folder o
 4. After the last batch: for a new show it prints a `chatcom new <transcript.txt> --setup …` command: run it.
    For a weekly import it goes straight on to `ingested`: continue with step 5 of the fixed sequence.
 5. Never guess a name you cannot see. If chatcom says `CHATCOM_E_SPEAKER_UNMAPPED`, ask the person who
-   `Speaker A` is and add `--speaker A=<name>` to `read-submit`.
+   `Speaker A` is, then run the same `read-submit` again with `--speaker A=<name>` added (it joins the kept
+   reads again; nothing is read twice). For a new show, then run the `chatcom new …` command it prints.
 
 ## The fixed sequence
 

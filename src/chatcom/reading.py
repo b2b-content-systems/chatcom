@@ -148,6 +148,14 @@ def submit(t: Target, doc, *, model: str, opts: dict, draft: Path | None = None)
     """Check one batch of reads. Returns {"done": bool, ...}; after the last
     batch, joins the images into transcript.txt (stage `read`)."""
     st = t.load()
+    if st.get("stage") == "read" and st.get("reader") and len(st["reader"]["done"]) == len(st["reader"]["copies"]):
+        # every image is read: a repeat joins again from the kept reads, with this call's --speaker,
+        # --reverse or --anchor-date (the fix chatcom names when a speaker is unmapped)
+        path = join(t, st["reader"], opts)
+        st["transcript"] = str(path)
+        t.save(st)
+        return {"done": True, "read": len(st["reader"]["done"]), "images": len(st["reader"]["copies"]),
+                "transcript": str(path), "rejoined": True}
     if st.get("stage") != "copied" or not st["reader"]["batch"]:
         raise ChatcomError("CHATCOM_E_STATE", f"the import is at stage '{st.get('stage')}' with no batch handed out",
                            f"Run `chatcom read-prep {t.arg}` first.", context={"stage": st.get("stage")})
@@ -182,7 +190,7 @@ def submit(t: Target, doc, *, model: str, opts: dict, draft: Path | None = None)
         store.write_json(t.dir / "reads" / f"{f}.json", doc["reads"][f])
         if t.show is not None:  # the same per-show cache the CLI readers use
             sha = next(c["sha256"] for c in rs["copies"] if c["file"] == f)
-            safe = "".join(ch if ch.isalnum() or ch in "-._" else "_" for ch in f"session-{model}")
+            safe = "".join(ch if ch.isalnum() or ch in "-._" else "_" for ch in f"session-{model}")[:80]
             store.write_json(t.show.dir / "cache" / "reads" / f"{sha}-{safe}-v{PROMPT_VERSION}.json",
                              doc["reads"][f])
     rs = {**rs, "done": rs["done"] + rs["batch"], "batch": [], "attempts": 0, "cycles": 0, "last_errors": None,
@@ -200,7 +208,9 @@ def submit(t: Target, doc, *, model: str, opts: dict, draft: Path | None = None)
 
 def join(t: Target, rs: dict, opts: dict) -> Path:
     saved = dict(rs.get("opts") or {})
-    merged = {**saved, **{k: v for k, v in opts.items() if v not in (None, {}, [])}}
+    merged = {**saved, **{k: v for k, v in opts.items() if v not in (None, {}, []) and k != "replay_reads"}}
+    if saved.get("speakers") and opts.get("speakers"):
+        merged["speakers"] = {**saved["speakers"], **opts["speakers"]}
     anchor = merged.get("anchor")
     if isinstance(anchor, str):
         anchor = date.fromisoformat(anchor)

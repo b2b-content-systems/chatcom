@@ -238,3 +238,74 @@ def test_a_reader_other_than_the_session_is_refused(capsys, lake_show, tmp_path,
     (tmp_path / "x.json").write_text("{}", "utf-8")
     code, _, err = run(capsys, "--json", "read-submit", "lake-house", "--file", str(tmp_path / "x.json"), "--model", "m")
     assert code == 6 and json.loads(err)["code"] == "CHATCOM_E_AWAITING_CONFIRMATION"
+
+
+
+# ---- PR 5 adversarial review ----------------------------------------------------------------------
+# Value: protects=an excluded person never joins a first import's cast; the --speaker fix works after the last
+# batch; a failed --replace keeps the old import; links are refused; fails_when=any guard is removed; why_new=PR 5
+# adversarial review; seam=none; no_claim=what the session reads
+
+def _unnamed_reads():
+    reads = {f"{i + 1:03d}.png": json.loads(json.dumps(READS[f"IMG_{i + 1:04d}.PNG"])) for i in range(3)}
+    for r in reads["003.png"]["rows"]:
+        if r.get("name") == "Mike":
+            r["name"] = None  # one of Mike's bubbles with no name shown, after a gap
+    reads["003.png"]["rows"][0] = {"type": "message", "side": "left", "name": None, "text": "anyone?", "time": "7:16 PM"}
+    reads["003.png"]["rows"] = [reads["003.png"]["rows"][0]]
+    return reads
+
+
+def test_a_first_import_with_exclusions_refuses_unnamed_speakers(capsys, chatcom_home, tmp_path, not_a_tty):
+    d = shots(tmp_path / "shots")
+    out = json.loads(run(capsys, "--json", "new", str(d), "--show", "lake-shots", "--operator", "Dave", "--tz", TZ,
+                         "--exclude", "Mike", "--writer", "session", "--accept-data-flow")[1])
+    b = json.loads(Path(json.loads(run(capsys, "--json", "read-prep", "--import", out["import"])[1])["bundle"])
+                   .read_text("utf-8"))
+    rj = reader_json(tmp_path, [Path(p).name for p in b["images"]], _unnamed_reads())
+    done = json.loads(run(capsys, "--json", "read-submit", "--import", out["import"], "--file", str(rj),
+                          "--model", "m")[1])
+    code, _, err = run(capsys, "--json", *done["next_command"].split()[1:])
+    assert code == 2 and json.loads(err)["code"] == "CHATCOM_E_SPEAKER_UNMAPPED"
+    # the documented fix: name Speaker A on read-submit, then make the show
+    again = json.loads(run(capsys, "--json", "read-submit", "--import", out["import"], "--file", str(rj),
+                           "--model", "m", "--speaker", "A=Theo")[1])
+    assert again["rejoined"]
+    code, out2, err = run(capsys, "--json", *again["next_command"].split()[1:])
+    assert code == 0, err
+    assert "Speaker A" not in json.loads(out2)["cast"] + json.loads(out2)["chorus"]
+
+
+def test_a_weekly_speaker_fix_after_the_last_batch(capsys, lake_show, tmp_path, not_a_tty):
+    setup = json.loads(lake_show.setup_path.read_text("utf-8"))
+    setup["exclude"] = ["Priya"]
+    lake_show.setup_path.write_text(json.dumps(setup), "utf-8")
+    _weekly(capsys, lake_show, tmp_path)
+    b = _prep(capsys)
+    rj = reader_json(tmp_path, [Path(p).name for p in b["images"]], _unnamed_reads())
+    code, _, err = run(capsys, "--json", "read-submit", "lake-house", "--file", str(rj), "--model", "m")
+    assert code == 2 and json.loads(err)["code"] == "CHATCOM_E_SPEAKER_UNMAPPED"
+    code, out, err = run(capsys, "--json", "read-submit", "lake-house", "--file", str(rj), "--model", "m",
+                         "--speaker", "A=Theo")
+    assert code == 0, err
+    assert json.loads(out)["stage"] == "ingested"
+
+
+def test_a_failed_replace_keeps_the_old_import(capsys, lake_show, tmp_path, not_a_tty):
+    _weekly(capsys, lake_show, tmp_path)
+    bad = lake_show.inbox / "bad"
+    bad.mkdir()
+    (bad / "x.png").write_bytes(b"not an image at all, padded" * 2)
+    code, _, err = run(capsys, "--json", "ingest", "lake-house", "--export", str(bad), "--accept-data-flow", "--replace")
+    assert code == 2 and json.loads(err)["code"] == "CHATCOM_E_IMAGE_UNREADABLE"
+    b = _prep(capsys)
+    assert all(Path(p).is_file() for p in b["images"]) and len(b["images"]) == 3
+
+
+def test_a_link_inside_an_export_folder_is_refused(capsys, lake_show, tmp_path, not_a_tty):
+    d = shots(lake_show.inbox / "linked", 1)
+    outside = tmp_path / "secret.png"
+    outside.write_bytes(png(10, 10))
+    (d / "IMG_9999.PNG").symlink_to(outside)
+    code, _, err = run(capsys, "--json", "ingest", "lake-house", "--export", str(d), "--accept-data-flow")
+    assert code == 2 and json.loads(err)["code"] == "CHATCOM_E_IMAGE_UNREADABLE" and "link" in json.loads(err)["what"]

@@ -214,6 +214,8 @@ def _pending_dir(exports: list) -> Path | None:
 def _new_show(exports, setup, tz, max_unparsed, log, key, source, thread, shot_ctx):
     res, display = _parse_export(exports, setup.get("timezone", tz), setup.get("aliases", {}), max_unparsed, log,
                                  None, key=key, source=source, thread=thread, shots=shot_ctx)
+    if res.adapter == "screenshots":
+        check_screenshot_exclusions(setup, res)  # an excluded person never joins the cast as "Speaker A"
     slug = setup.get("slug") or store.slugify(display)
     show = store.Show(slug)
     if show.exists():
@@ -392,11 +394,17 @@ def ingest(show: store.Show, export, *, accepted: bool, mode: str, since: dateti
         if images and mode == "session":
             # skill mode: copy, then the session reads them (read-prep / read-submit)
             from chatcom import reading
+            import shutil
             dest = show.episode_dir(code) / "import"
-            if dest.exists():
-                import shutil
-                shutil.rmtree(dest)
-            copies = reading.copy_images(registry.expand(exports), dest, (shots or {}).get("max_images") or 40)
+            fresh = dest.with_name("import.new")  # check and copy first; the old import goes only on success
+            shutil.rmtree(fresh, ignore_errors=True)
+            try:
+                copies = reading.copy_images(registry.expand(exports), fresh, (shots or {}).get("max_images") or 40)
+            except BaseException:
+                shutil.rmtree(fresh, ignore_errors=True)
+                raise
+            shutil.rmtree(dest, ignore_errors=True)
+            fresh.rename(dest)
             st = state_ops.new(code, None, mode, store.now(), stage="copied", reader="session")
             st["source"] = "screenshots"
             st["reader"] = reading.reader_state(copies, shots or {})
