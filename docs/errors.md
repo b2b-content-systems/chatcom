@@ -83,6 +83,23 @@ A transcript has a line chatcom cannot read as written: a header other than `# s
 (`--- 2026-02-30 ---`, `[25:00]`). The error names the line. Fix it as
 [transcript-format.md](transcript-format.md) shows. Exit 2.
 
+## chatcom_e_image_unreadable
+A screenshot is not a PNG, JPEG, WebP or HEIC image, is over 40 MB or 60 million pixels, could not be decoded,
+or is HEIC on a computer other than a Mac. The error names the file. Pass the screenshots as your phone saved
+them, or save that one as PNG. Exit 2.
+
+## chatcom_e_too_many_images
+More screenshots (or tiles: a very tall screenshot is split into several) than the limit, 40 by default. Import
+the newest ones, or raise the limit with `--max-images N`. Exit 2.
+
+## chatcom_e_speaker_unmapped
+`--speaker LABEL=NAME` names a label that is not in these screenshots. The error lists the labels it found
+(`Speaker A`, the names shown above bubbles). Use one of them, or `right=NAME` for your own bubbles. Exit 2.
+
+## chatcom_e_import_in_progress
+This episode has a screenshot import that stopped part way (for example after `--review`). Continue it by
+importing the `transcript.txt` it wrote, or pass `--replace` to start the import over. Exit 2.
+
 ## chatcom_e_export_outside_inbox
 In skill mode (`chatcom ingest` for the session writer, and `chatcom episode --dry-run` without a terminal) chatcom
 reads only the export given at `chatcom new` or files in the show's inbox (`~/.chatcom/<show>/inbox/`). Other

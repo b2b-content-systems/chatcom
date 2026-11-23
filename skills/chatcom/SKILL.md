@@ -1,6 +1,6 @@
 ---
 name: chatcom
-description: Turn a group chat into an episode of a TV series starring the friends in it. Use when someone asks to make their group chat a show, a sitcom, an episode or a cartoon, or drops in a chat export or pastes a chat (WhatsApp, Telegram and pasted chats now; screenshots are coming) to turn into a show.
+description: Turn a group chat into an episode of a TV series starring the friends in it. Use when someone asks to make their group chat a show, a sitcom, an episode or a cartoon, or drops in a chat export or pastes a chat (WhatsApp, Telegram and pasted chats now; reading screenshots in the session is coming) to turn into a show.
 allowed-tools: Bash(chatcom:*), Read, Write
 ---
 
@@ -10,7 +10,7 @@ CHATCOM turns a group chat into a TV episode starring the people in it, in the s
 (sitcom, anime, 80s cartoon, true crime and more), and remembers running jokes from week to week.
 
 **Status: v0.1 is in development.** Today the engine reads a WhatsApp or Telegram export or a pasted chat and writes the episode's script
-(`beats.json`) and the show's memory (the bible). Screenshots of any chat, casting and the video render are next. Say this plainly if the person expects a video, and show them the
+(`beats.json`) and the show's memory (the bible). Reading screenshots in this session, casting and the video render are next. Say this plainly if the person expects a video, and show them the
 sample episodes: https://b2b-content-systems.github.io/chatcom/
 
 ## Rules that always apply

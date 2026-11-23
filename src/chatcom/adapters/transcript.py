@@ -385,7 +385,11 @@ def parse(text: str, tz_name: str, *, aliases: dict[str, list[str]] | None = Non
             "source": {"adapter": "transcript", "line": row.line, "label": label},
         })
     fmt = {"origin": origin or "", "speakers": "listed" if speakers else "inferred"}
-    return ParseResult(msgs, 0, unparsed, len(rows), fmt, None, masked, "transcript")
+    # A transcript chatcom wrote from screenshots keeps that as its source.
+    adapter = "screenshots" if origin == "screenshots" else "transcript"
+    for m in msgs:
+        m["source"]["adapter"] = adapter
+    return ParseResult(msgs, 0, unparsed, len(rows), fmt, None, masked, adapter)
 
 
 # ---- write ------------------------------------------------------------------------
