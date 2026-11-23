@@ -4,9 +4,17 @@ Any chat app works through screenshots: Signal, Google Messages, Snapchat, Disco
 no export. CHATCOM reads each screenshot, joins them in order and drops what repeats where two screenshots
 overlap.
 
-**Status:** this release joins screenshots with fixed rules and reads them with a recorded (replay) reader, for
-tests and the demo. Reading your own screenshots in Claude Code (skill mode) and with Gemini (CLI mode) arrive in
-the next releases. Until then, paste or type the chat as a transcript ([transcript-format.md](transcript-format.md)).
+**Status:** in Claude Code (skill mode) the session reads your screenshots: ask the skill to make a show from
+the folder. Reading them with Gemini (CLI mode) arrives in the next release; until then, CLI mode refuses
+screenshots, and you can paste or type the chat as a transcript ([transcript-format.md](transcript-format.md)).
+
+## In Claude Code
+
+`chatcom new <folder> --writer session --accept-data-flow` (or `chatcom ingest <show> --export <folder>
+--accept-data-flow` for a later week) copies the images. Then `chatcom read-prep` hands the session up to 8
+copies at a time, the session writes what each shows into `reader.json`, and `chatcom read-submit` checks it.
+After the last batch chatcom joins them. The session sees the screenshots in full (phone numbers, and anyone you
+exclude): for a group you do not fully trust, use CLI mode once it can read screenshots.
 
 ## Taking the screenshots
 
@@ -25,7 +33,8 @@ the next releases. Until then, paste or type the chat as a transcript ([transcri
    `--reverse` / `--no-reverse`); repeated rows at a seam are dropped; your own bubbles (the right side) are you;
    a bubble with no name takes the name above it; no name at all is `Speaker A`. Day headers are resolved
    against when each screenshot was taken. `--anchor-date YYYY-MM-DD` dates the messages above the first
-   header. With people excluded, every `Speaker A` must be named (`--speaker A=NAME`), or the import stops.
+   header. A name never carries across a gap between screenshots that do not overlap, and times that run
+   backwards (more than a few minutes, other than past midnight) stop the import: the order is wrong. With people excluded, every `Speaker A` must be named (`--speaker A=NAME`), or the import stops.
 4. **Transcript.** The result is written as `transcript.txt` (`# source: screenshots`) in the episode's
    `import/` folder, then masked (phone numbers) and filtered (excluded people) like any other source.
 

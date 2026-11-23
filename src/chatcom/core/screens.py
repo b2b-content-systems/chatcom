@@ -27,6 +27,8 @@ from chatcom.core.messages import identity_text, normalize_text
 
 OPERATOR_SIDE = "right"
 UNNAMED = "Speaker A"
+BACKWARD_SLACK = timedelta(minutes=5)  # a misread digit or an edited message
+MIDNIGHT_GAP = timedelta(hours=6)       # a bigger jump back with no header is the next day
 MAX_NAME = 40
 WEEKDAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
 MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"]
@@ -205,8 +207,10 @@ def join(images: list[Image], *, tz: tzinfo, operator: str, speakers: dict[str, 
 
     # seams: drop b's repeated head; keep the whole copy of a cut-off row
     drops = 0
+    linked = [True]  # does each image overlap the one before it?
     for a, b in zip(order, order[1:]):
         k = overlap(a, b)
+        linked.append(k > 0)
         if not k:
             continue
         head = _messages(b)[:k]
@@ -225,11 +229,16 @@ def join(images: list[Image], *, tz: tzinfo, operator: str, speakers: dict[str, 
     current: date | None = anchor
     carry: str | None = None
     chat_name = next((img.chat_name for img in order if img.chat_name), None)
-    for img, rows in zip(order, kept):
+    last_timed: datetime | None = None
+    header_since = False
+    for i, (img, rows) in enumerate(zip(order, kept)):
         ref = img.captured  # "Today" is the day each screenshot was taken; --anchor-date only dates the start
+        if not linked[i]:
+            carry = None  # a gap between screenshots: a name above the gap is not this bubble's sender
         for r in rows:
             if r.get("type") == "date":
                 current = resolve_date(r.get("text", ""), ref) or current
+                header_since = True
                 continue
             if r.get("side") == OPERATOR_SIDE:
                 label = right
@@ -241,6 +250,19 @@ def join(images: list[Image], *, tz: tzinfo, operator: str, speakers: dict[str, 
             hm = parse_time(r.get("time"))
             if current and hm:
                 when = datetime.combine(current, time(*hm)).replace(tzinfo=tz)
+                if last_timed and when < last_timed - BACKWARD_SLACK:
+                    if not header_since and last_timed - when > MIDNIGHT_GAP:
+                        current += timedelta(days=1)  # past midnight with no day header in view
+                        when += timedelta(days=1)
+                    else:
+                        raise ChatcomError(
+                            "CHATCOM_E_USAGE",
+                            f"the screenshot times go back from {last_timed:%Y-%m-%d %H:%M} to {when:%H:%M} "
+                            f"in {img.name}, so the screenshots are out of order",
+                            "Check the order: pass --reverse (newest first) or --no-reverse, or set "
+                            "--anchor-date. Otherwise type the chat as a transcript (docs/transcript-format.md).",
+                            context={"image": img.name})
+                last_timed, header_since = when, False
                 precision = "minute"
             elif current:
                 when = datetime.combine(current, time(12)).replace(tzinfo=tz)
