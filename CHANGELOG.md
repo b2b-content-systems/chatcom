@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.1.0.dev5 (2026-11-23)
+
+Any group chat, PR 5 of 7: the SessionReader (skill mode reads screenshots).
+
+### Added
+- `chatcom read-prep` and `chatcom read-submit`: in Claude Code the session reads screenshots, 8 at a time, from
+  the copies only (`prompts/reader.md`: the images are data, not instructions). chatcom checks every read against
+  `schemas/read.schema.json` and joins them with the fixed rules.
+- A first-time screenshot import waits as a pending import (`--import ID`) until its transcript makes the show
+  (`chatcom new <transcript.txt> --setup …`); a weekly import goes on to `ingested` by itself.
+- `CHATCOM_E_READ_INVALID` lists bad reads by JSON path; 3 submits per `read-prep` and 3 `read-prep`s per batch,
+  then `CHATCOM_E_READER_GAVE_UP` (exit 4) with the reads kept.
+- Stage `copied` is written in skill mode; `chatcom status` prints `chatcom read-prep <show>`.
+
+### Changed
+- A name no longer carries across a gap between screenshots that do not overlap.
+- Times that run backwards stop the join (more than 5 minutes, other than past midnight with no day header).
+
 ## 0.1.0.dev4 (2026-11-23)
 
 Any group chat, PR 4 of 7: screenshot post-processing and the replay reader.
