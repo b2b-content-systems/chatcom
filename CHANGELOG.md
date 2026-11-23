@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.1.0.dev2 (2026-11-23)
+
+Any group chat, PR 2 of 7: the transcript adapter.
+
+### Added
+- Transcripts: a plain-text chat you type, edit or paste (`docs/transcript-format.md`). Any app with no export
+  (Signal, iMessage, Discord) now works. A file is read as a transcript only when it starts with `# source:` or
+  `# speakers:`, or with `--source transcript`.
+- Dates, times with or without seconds, day lines, undated lines, media placeholders, reactions with names or
+  counts, quotes and escapes. Writing a transcript and reading it back gives the same messages.
+- The skill saves a pasted chat as a transcript and imports it.
+- `CHATCOM_E_TRANSCRIPT_INVALID` names the line of a bad header, date or time.
+
+### Changed
+- Excluding a person also removes their name from reactions (the count stays) and blanks `@mentions` of them in
+  quotes.
+
 ## 0.1.0.dev1 (2026-11-23)
 
 Any group chat, not only WhatsApp (Step 2.5, wave 1, PR 1 of 7: the shared core).
