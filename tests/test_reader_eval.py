@@ -59,3 +59,30 @@ def test_the_script_prints_a_table_and_json():
     js = subprocess.run([sys.executable, str(ROOT / "scripts" / "eval_reader.py"), str(CASES), "--json"],
                         capture_output=True, text=True, check=True).stdout
     assert json.loads(js)[0]["case"] == "lake"
+
+
+
+def test_dates_and_empty_edges():
+    gold = msgs("A: one\nB: two\n")
+    other_day = T.parse("# source: paste\n# speakers: A, B\n--- 2026-01-10 ---\nA: one\nB: two\n", TZ).messages
+    assert E.compare(other_day, gold)["dates"] == 0.0
+    undated = T.parse("# source: paste\n# speakers: A, B\nA: one\nB: two\n", TZ).messages
+    assert E.compare(undated, undated)["dates"] is None
+    assert E.compare([], gold)["recall"] == 0.0 and E.compare([], gold)["precision"] == 1.0
+    assert E.compare(gold, [])["precision"] == 0.0 and E.compare(gold, [])["recall"] == 1.0
+
+
+@needs_ffmpeg
+def test_the_score_names_the_model_that_answered():
+    from collections import Counter
+
+    class Answered(ReplayReader):
+        answered_by = Counter({"claude-sonnet-5-5": 3})
+    s = E.run_case(CASES / "lake", Answered(CASES / "lake" / "reads.json"), tz=TZ, operator="Dave")
+    assert s.reader == "claude-sonnet-5-5 x3"
+
+
+def test_the_script_needs_at_least_one_case(tmp_path):
+    r = subprocess.run([sys.executable, str(ROOT / "scripts" / "eval_reader.py"), str(tmp_path)],
+                       capture_output=True, text=True)
+    assert r.returncode == 2 and "no cases" in r.stderr

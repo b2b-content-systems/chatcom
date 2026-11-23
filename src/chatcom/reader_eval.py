@@ -103,7 +103,15 @@ def run_case(case: Path, reader, *, tz: str, operator: str, work: Path | None = 
     s = compare(found, gold)
     return Score(case.name, s["gold"], s["found"], round(s["recall"], 3), round(s["precision"], 3),
                  round(s["sender"], 3), round(s["order"], 3), None if s["dates"] is None else round(s["dates"], 3),
-                 getattr(reader, "model", "?"))
+                 _answered(reader))
+
+
+def _answered(reader) -> str:
+    """The models that really answered (a fallback may have read everything)."""
+    by = getattr(reader, "answered_by", None)
+    if by:
+        return ", ".join(f"{m} x{n}" for m, n in by.most_common())
+    return getattr(reader, "model", "?")
 
 
 def table(scores: list[Score]) -> str:
