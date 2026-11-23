@@ -66,10 +66,20 @@ def test_a_scene_that_cannot_fit_is_refused_when_the_script_is_validated():
     assert e.value.code == "CHATCOM_E_BEATS_INVALID"
 
 
+# Value: protects=the writer's validator refuses a draft the timeline cannot fit, and passes one it can;
+# fails_when=validate stops calling the fit rule or reports it at the wrong path; why_new=the old check read the
+# source text, not the result; seam=none; no_claim=the writer's retry loop (validator called directly)
 def test_the_beats_validator_runs_the_same_fit_check():
-    import inspect
-    src = inspect.getsource(beats_ops.validate)
-    assert "render.fit_problems(beats, n)" in src  # write time and render time use one rule
+    from chatcom.core import bible as bible_ops
+    bib = bible_ops.new_bible(slug="s", title=None, look="sitcom", operator_sender="Dave", timezone="UTC",
+                              created="2026-01-01T00:00:00+00:00", cast=["Dave", "Mike", "Theo", "Priya", "Sam"],
+                              chorus=["Jonah"])
+    cs = bible_ops.new_cast_sheet(bib)
+    assert beats_ops.validate(beats(), bible=bib, cast_sheet=cs, new_messages=25) == []
+    b = beats()
+    b["cold_open"]["bubbles"] = [dict(b["cold_open"]["bubbles"][0], text=w, sticker=None) for w in "a b c d e f".split()]
+    errs = beats_ops.validate(b, bible=bib, cast_sheet=cs, new_messages=25)  # write time and render time use one rule
+    assert [e["path"] for e in errs] == ["$.cold_open.bubbles"] and "at most 5" in errs[0]["message"]
 
 
 def test_bubbles_carry_their_times_and_the_drawn_cast_in_order():
@@ -83,6 +93,21 @@ def test_bubbles_carry_their_times_and_the_drawn_cast_in_order():
     for x in tl.segment("scene_2").bubbles:
         if x.sticker:
             assert x.start <= render.sticker_time(x) <= x.end
+    # Value: protects=scene bubbles are timed from the episode start, inside their own segment; fails_when=the
+    # segment offset is dropped and later scenes play over the cold open; why_new=cold open starts at 0 in E01, so the
+    # check above cannot see an offset; seam=none; no_claim=none beyond protects
+    for code in ("S01E01", "S01E02"):
+        bb = beats(code)
+        for name in render.SCENE_SEGMENTS:
+            seg = render.timeline(bb, sheet(bb), None, show_title="X").segment(name)
+            assert seg.bubbles and all(seg.start <= x.start < x.end <= seg.start + seg.length for x in seg.bubbles)
+    # Value: protects=a chorus speaker (pose null) shows a bubble with no drawing and needs none; fails_when=the pose
+    # check or the cast list stops skipping pose None; why_new=the fixture has no chorus bubble; seam=none;
+    # no_claim=how a chorus label looks
+    b = beats()
+    b["cold_open"]["bubbles"][2] = dict(b["cold_open"]["bubbles"][2], speaker="Jonah", pose=None)
+    cold = render.timeline(b, sheet(beats()), None, show_title="X").segment("cold_open")
+    assert cold.bubbles[2].speaker == "Jonah" and cold.bubbles[2].pose is None and "Jonah" not in cold.cast
 
 
 def test_a_missing_drawing_stops_the_render_and_names_the_fix():
@@ -104,6 +129,16 @@ def test_credits_go_two_to_a_card():
     b = beats()
     cards = render.timeline(b, sheet(b), None, show_title="X").segment("credits").cards
     assert [len(c) for c in cards] == [2, 2, 1] and cards[0][0] == b["credits"][0]
+    # Value: protects=a full cast of 8 fills exactly 4 cards and a 9th credit is refused, not drawn on a 5th card;
+    # fails_when=the card guard is removed or off by one; why_new=the fixture has 5 credits, far from the cap;
+    # seam=none; no_claim=none beyond protects
+    sh = sheet(b)
+    b["credits"] = [{"name": f"P{i}", "role": "r"} for i in range(budget.MAX_CAST)]
+    assert [len(c) for c in render.timeline(b, sh, None, show_title="X").segment("credits").cards] == [2, 2, 2, 2]
+    b["credits"].append({"name": "P9", "role": "r"})
+    with pytest.raises(ChatcomError) as e:  # a draft that skipped validation
+        render.timeline(b, sh, None, show_title="X")
+    assert e.value.code == "CHATCOM_E_BEATS_INVALID"
 
 
 def test_previously_on_recaps_the_last_finished_episode_not_this_one():
@@ -126,3 +161,17 @@ def test_text_is_kept_verbatim_for_the_composer_to_escape():
     b["cold_open"]["bubbles"][0] = dict(b["cold_open"]["bubbles"][0], text='</div><script>x</script> "onerror=')
     tl = render.timeline(copy.deepcopy(b), sheet(b), None, show_title="X")
     assert tl.segment("cold_open").bubbles[0].text == '</div><script>x</script> "onerror='
+
+
+def test_the_writer_is_told_each_segments_bubble_limit_from_the_same_rule(lake_show):
+    from chatcom.core import bundle
+    for n in (1, 2):
+        limits = render.bubble_limits(n)
+        assert limits["cold_open"] == 5 and limits["scene_1"] == 6  # 6 s holds 5; a scene slot holds the schema's 6
+        for seg, most in limits.items():
+            length = budget.seconds(n, seg)
+            assert render.fits(["x"] * most, length) and (most == 6 or not render.fits(["x"] * (most + 1), length))
+    bible = json.loads(lake_show.bible_path.read_text("utf-8"))
+    sheet_doc = json.loads(lake_show.cast_path.read_text("utf-8"))
+    b = bundle.build(bible, sheet_doc, [])  # the prompt reads the number from here, never states one
+    assert b["budget"]["max_bubbles"] == render.bubble_limits(1)

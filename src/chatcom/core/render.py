@@ -109,6 +109,17 @@ def _down(x: float) -> float:
     return math.floor(x * 10000 + 1e-9) / 10000
 
 
+def max_bubbles(length: float) -> int:
+    """The most bubbles a slot of `length` seconds can hold at HOLD_FLOOR each."""
+    return int((length - LEAD_IN + GAP + 1e-9) // (HOLD_FLOOR + GAP))
+
+
+def bubble_limits(episode_number: int) -> dict[str, int]:
+    """Per scene segment, the most bubbles it can hold (the schema's cap of 6 also applies).
+    The writer's bundle carries this, so the prompt never states a number of its own."""
+    return {n: min(6, max_bubbles(s)) for n, s in budget.segments(episode_number) if n in SCENE_SEGMENTS}
+
+
 def fit_problems(beats: dict, episode_number: int) -> list[dict]:
     """Scenes whose bubbles cannot all fit their slot, as validator problems."""
     out = []
@@ -118,7 +129,7 @@ def fit_problems(beats: dict, episode_number: int) -> list[dict]:
         length = budget.seconds(episode_number, seg)
         texts = [b["text"] for b in scene["bubbles"]]
         if not fits(texts, length):
-            most = int((length - LEAD_IN + GAP) // (HOLD_FLOOR + GAP))
+            most = max_bubbles(length)
             out.append({"path": f"{path}.bubbles", "message":
                         f"{len(texts)} bubbles do not fit in {length:.1f} s; at most {most} "
                         f"(each stays up at least {HOLD_FLOOR:.0f} s)"})

@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from importlib import resources
 
-from chatcom.core import bible as bible_ops
+from chatcom.core import bible as bible_ops, render
 from chatcom.core import budget, ranking
 
 
@@ -22,7 +22,8 @@ def build(bible: dict, cast_sheet: dict, window_messages: list[dict], *,
         "look": bible["show"]["look"],
         "new_messages": len(window_messages),
         "sampling": stats,
-        "budget": budget.summary(bible_ops.episode_number(code)),
+        "budget": {**budget.summary(bible_ops.episode_number(code)),
+                   "max_bubbles": render.bubble_limits(bible_ops.episode_number(code))},
         "ids": {
             "cast": [m["name"] for m in bible["cast"]],
             "chorus": bible["chorus"] + bible_ops.new_speakers(bible, window_messages),

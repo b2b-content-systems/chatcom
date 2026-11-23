@@ -75,8 +75,9 @@ did not have.
   never been needs a `new_location` with the same id (at most 2 per episode;
   each costs an image call). Prefer reuse.
 - Words must read at phone speed with the sound off: at most the per-segment
-  word counts in the budget, at most 90 characters per bubble, at most 6
-  bubbles per scene.
+  word counts in the budget, at most 90 characters per bubble, and at most
+  the budget's `max_bubbles` for each segment (6 for a scene, fewer for the
+  short cold open).
 - Every cast member gets exactly one credit.
 - `synopsis`: at most 18 words; it becomes next week's "Previously on" card.
 - `show_title`: only when the bible's title is null (name the show, at most
