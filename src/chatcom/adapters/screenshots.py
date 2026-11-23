@@ -42,9 +42,40 @@ def load(paths: list[Path], ctx) -> tuple[ParseResult, str]:
          "captured": e.captured.isoformat(timespec="seconds"), "captured_from": e.captured_from} for e in entries],
         "copies": copies})
     reader = shots["reader"]
-    folder = work / "images"
+    reads = read_copies(copies, work / "images", reader, shots.get("cache_dir"))
+    joined = screens.join(reads, tz=ZoneInfo(ctx.tz), operator=shots["operator"], speakers=shots.get("speakers"),
+                          reverse=shots.get("reverse"), anchor=shots.get("anchor"))
+    msgs = [{"sender": m["label"], "time": m["time"], "time_precision": m["time_precision"], "text": m["text"],
+             "media": m["media"], "deleted": m["deleted"], "reactions": m["reactions"], "quote": m["quote"],
+             "source": {"label": m["label"]}} for m in joined.messages]
+    try:
+        text = transcript.write(msgs, ctx.tz, source="screenshots")
+    except ValueError as e:  # join() makes every name writable; this is a guard, not a path
+        raise ChatcomError("CHATCOM_E_USAGE", f"the screenshots could not be written as a transcript: {e}",
+                           "Name the speaker with --speaker LABEL=NAME, or run with --review.") from None
+    path = work / "transcript.txt"
+    store.write_atomic(path, text)
+    store.write_atomic(work / "join.json", json.dumps({"reversed": joined.reversed, "seam_drops": joined.seam_drops,
+                                                       "labels": joined.labels, "reader": reader.model}))
+    res = transcript.parse(text, ctx.tz, aliases=ctx.aliases, key=ctx.key,
+                           anchor=min((r.captured for r in reads), default=None))
+    res.group_name = joined.chat_name
+    res.fmt = {"images": len(entries), "copies": len(copies), "order": "newest first" if joined.reversed else "as given",
+               "reader": reader.model}
+    res.artifacts["reader_calls"] = getattr(reader, "calls", 0)
+    answered = getattr(reader, "answered_by", None)
+    if answered:  # name the models that really answered (a fallback may have read everything)
+        res.artifacts["reader_answered"] = dict(answered)
+        res.fmt["reader"] = ", ".join(f"{m} x{n}" for m, n in answered.most_common())
+    if getattr(reader, "fallbacks", None):
+        res.artifacts["reader_fallbacks"] = list(reader.fallbacks)
+    res.artifacts.update({"transcript": str(path), "workdir": str(work)})
+    return res, joined.chat_name or "Screenshots"
 
-    cache_dir = shots.get("cache_dir")
+def read_copies(copies: list[dict], folder: Path, reader, cache_dir: Path | None) -> list[screens.Image]:
+    """Read every copy (up to 3 at once, cached), splitting a reply cut off at
+    the token limit into halves that are merged back. Shared by the import and
+    the reader eval, so the eval measures the pipeline that ships."""
 
     def read_one(c: dict, depth: int = 0) -> screens.Image:
         marker = cache_dir / f"{c['sha256']}-too-long" if cache_dir else None
@@ -76,31 +107,4 @@ def load(paths: list[Path], ctx) -> tuple[ParseResult, str]:
         pool.shutdown(wait=True, cancel_futures=True)
         raise
     pool.shutdown(wait=True)
-    joined = screens.join(reads, tz=ZoneInfo(ctx.tz), operator=shots["operator"], speakers=shots.get("speakers"),
-                          reverse=shots.get("reverse"), anchor=shots.get("anchor"))
-    msgs = [{"sender": m["label"], "time": m["time"], "time_precision": m["time_precision"], "text": m["text"],
-             "media": m["media"], "deleted": m["deleted"], "reactions": m["reactions"], "quote": m["quote"],
-             "source": {"label": m["label"]}} for m in joined.messages]
-    try:
-        text = transcript.write(msgs, ctx.tz, source="screenshots")
-    except ValueError as e:  # join() makes every name writable; this is a guard, not a path
-        raise ChatcomError("CHATCOM_E_USAGE", f"the screenshots could not be written as a transcript: {e}",
-                           "Name the speaker with --speaker LABEL=NAME, or run with --review.") from None
-    path = work / "transcript.txt"
-    store.write_atomic(path, text)
-    store.write_atomic(work / "join.json", json.dumps({"reversed": joined.reversed, "seam_drops": joined.seam_drops,
-                                                       "labels": joined.labels, "reader": reader.model}))
-    res = transcript.parse(text, ctx.tz, aliases=ctx.aliases, key=ctx.key,
-                           anchor=min((r.captured for r in reads), default=None))
-    res.group_name = joined.chat_name
-    res.fmt = {"images": len(entries), "copies": len(copies), "order": "newest first" if joined.reversed else "as given",
-               "reader": reader.model}
-    res.artifacts["reader_calls"] = getattr(reader, "calls", 0)
-    answered = getattr(reader, "answered_by", None)
-    if answered:  # name the models that really answered (a fallback may have read everything)
-        res.artifacts["reader_answered"] = dict(answered)
-        res.fmt["reader"] = ", ".join(f"{m} x{n}" for m, n in answered.most_common())
-    if getattr(reader, "fallbacks", None):
-        res.artifacts["reader_fallbacks"] = list(reader.fallbacks)
-    res.artifacts.update({"transcript": str(path), "workdir": str(work)})
-    return res, joined.chat_name or "Screenshots"
+    return reads

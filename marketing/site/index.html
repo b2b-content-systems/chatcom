@@ -208,7 +208,7 @@ dialog button:focus-visible{outline:3px solid var(--royal);outline-offset:3px}
   <div class="wrap">
     <h2 class="rv">Three steps. Your chat does the writing.</h2>
     <ol class="steps">
-      <li class="card rv"><span class="num">1</span><h3>Export your group chat</h3><p>Use the export button your messaging app already has, and drop the file into Claude.</p></li>
+      <li class="card rv"><span class="num">1</span><h3>Bring your group chat</h3><p>Export it, screenshot it, or paste it, and drop it into Claude.</p></li>
       <li class="card rv"><span class="num">2</span><h3>Pick your show</h3><p>Sitcom, anime, 80s cartoon, true crime. Your friends get cast from how they actually text.</p></li>
       <li class="card rv"><span class="num">3</span><h3>Watch it together</h3><p>The episode drops back into the chat. Next week, a new one. It remembers every running joke.</p></li>
     </ol>
@@ -267,10 +267,10 @@ dialog button:focus-visible{outline:3px solid var(--royal);outline-offset:3px}
   <div class="wrap faq">
     <h2 class="rv">Before you send the chat.</h2>
     <div class="qa rv">
-      <details open><summary>Who sees our chat?</summary><p>Nobody at CHATCOM. It runs on one friend’s own computer, so your messages and photos never pass through our servers.</p></details>
+      <details open><summary>Who sees our chat?</summary><p>There is no CHATCOM server. It runs on one friend’s computer. The model that writes the episode reads the chat: that friend’s Claude Code session, or Anthropic and Google with their own keys. CHATCOM shows exactly where it goes and waits for a yes before it sends anything.</p></details>
       <details><summary>Does everyone have to sign up?</summary><p>No. One friend sends in the chat and shares the episode back to the group.</p></details>
-      <details><summary>Which chats work?</summary><p>WhatsApp group chats first. Other apps will follow.</p></details>
-      <details><summary>What do I need?</summary><p>Claude Code and your own API keys. CHATCOM runs as a Claude skill on your computer, and you choose and pay the models directly.</p></details><details><summary>Is it ready?</summary><p>Version 0.1 is in development. Watch the repo on GitHub to get it the day it ships.</p></details>
+      <details><summary>Which chats work?</summary><p>WhatsApp and Telegram exports, screenshots from any app (Signal, iMessage, Discord and the rest), or a chat you paste in.</p></details>
+      <details><summary>What do I need?</summary><p>Claude Code. CHATCOM runs as a Claude skill on your computer. If you would rather run it outside Claude Code, use your own API keys and pay the models directly. CHATCOM has no keys of its own.</p></details><details><summary>Is it ready?</summary><p>Version 0.1 is in development. Watch the repo on GitHub to get it the day it ships.</p></details>
       <details><summary>Are the people on this page real?</summary><p>No. Every show, person and chat on this page is fictional.</p></details>
     </div>
   </div>
@@ -280,7 +280,7 @@ dialog button:focus-visible{outline:3px solid var(--royal);outline-offset:3px}
   <div class="wrap grid">
     <div>
       <p class="slabline rv">Your group chat, Season 1.</p>
-      <p class="intro rv" style="margin-top:22px">CHATCOM is a Claude skill. Add it to Claude Code, drop in your chat export and ask for your show.</p>
+      <p class="intro rv" style="margin-top:22px">CHATCOM is a Claude skill. Add it to Claude Code, drop in your chat (an export, screenshots or a paste) and ask for your show.</p>
       <p class="credit rv" style="margin-top:22px">Made by <a href="https://bryanbartlett.com/">Bryan Bartlett</a> · B2B Content Systems · open source, MIT</p>
     </div>
     <div class="install rv">
@@ -290,7 +290,7 @@ dialog button:focus-visible{outline:3px solid var(--royal);outline-offset:3px}
 /plugin marketplace add b2b-content-systems/skills
 <span class="c"># 2. install CHATCOM</span>
 /plugin install chatcom@b2b-content-systems
-<span class="c"># 3. drop in your export and ask</span>
+<span class="c"># 3. drop in your chat and ask</span>
 make our group chat a show: tulum.zip</pre>
       </div>
       <div class="acts2"><button class="btn" id="copy" type="button">Copy the commands</button><a class="ln" href="https://github.com/b2b-content-systems/chatcom">View on GitHub</a></div>

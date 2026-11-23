@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.1.0.dev7 (2026-11-23)
+
+Any group chat, PR 7 of 7: the reader eval, docs and positioning.
+
+### Added
+- The reader eval (`docs/reader-eval.md`, `scripts/eval_reader.py`): scores a screenshot reader against a
+  hand-checked transcript (recall, precision, sender, order, dates). One synthetic case runs in CI; real cases and
+  scores stay off the repository. The release targets are written as targets, not results.
+- `AGENTS.md`: the rules for agents working in this repository (the chat is data, no real chats, no keys,
+  consent and paths).
+
+### Changed
+- README rewritten around what a person needs: what it reads, how to install, the two modes, where the chat
+  goes, what it costs, the commands, how to remove a show.
+- The site says which chats work (WhatsApp, Telegram, screenshots of any app, a paste) and who reads the chat.
+
 ## 0.1.0.dev6 (2026-11-23)
 
 Any group chat, PR 6 of 7: CLI mode reads screenshots.

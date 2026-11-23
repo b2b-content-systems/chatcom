@@ -1,0 +1,137 @@
+{
+ "model": "replay-reads-v1",
+ "reads": {
+  "IMG_0001.PNG": {
+   "chat_name": "Lake House Boys",
+   "rows": [
+    {
+     "type": "date",
+     "text": "Today"
+    },
+    {
+     "type": "message",
+     "side": "right",
+     "name": null,
+     "text": "who is bringing the grill this year",
+     "time": "7:02 PM"
+    },
+    {
+     "type": "message",
+     "side": "left",
+     "name": "Mike",
+     "text": "not me, I brought it last year",
+     "time": "7:03 PM",
+     "reactions": [
+      {
+       "emoji": "😂",
+       "sender": null,
+       "count": 2
+      }
+     ]
+    },
+    {
+     "type": "message",
+     "side": "left",
+     "name": "Theo",
+     "text": "found the receipt",
+     "time": "7:05 PM",
+     "placeholder": "image"
+    },
+    {
+     "type": "message",
+     "side": "left",
+     "name": "Sam",
+     "text": "the receipt says Mike",
+     "time": "7:07 PM",
+     "partial": "bottom"
+    }
+   ]
+  },
+  "IMG_0002.PNG": {
+   "chat_name": "Lake House Boys",
+   "rows": [
+    {
+     "type": "message",
+     "side": "left",
+     "name": "Sam",
+     "text": "the receipt says Mike",
+     "time": "7:07 PM"
+    },
+    {
+     "type": "message",
+     "side": "left",
+     "name": "Mike",
+     "text": "ok fine I'll bring it",
+     "time": "7:08 PM",
+     "quote": {
+      "sender": "Sam",
+      "text": "the receipt says Mike"
+     }
+    },
+    {
+     "type": "message",
+     "side": "right",
+     "name": null,
+     "text": "call me at +1 (555) 010-4477 if the dock floods",
+     "time": "7:09 PM"
+    },
+    {
+     "type": "message",
+     "side": "left",
+     "name": "Priya",
+     "text": "I can bring the cooler",
+     "time": "7:09 PM"
+    },
+    {
+     "type": "message",
+     "side": "left",
+     "name": "Theo",
+     "text": "who is driving",
+     "time": "7:10 PM"
+    }
+   ]
+  },
+  "IMG_0003.PNG": {
+   "chat_name": null,
+   "rows": [
+    {
+     "type": "message",
+     "side": "left",
+     "name": "Priya",
+     "text": "I can bring the cooler",
+     "time": "7:09 PM",
+     "partial": "top"
+    },
+    {
+     "type": "message",
+     "side": "left",
+     "name": "Theo",
+     "text": "who is driving",
+     "time": "7:10 PM"
+    },
+    {
+     "type": "message",
+     "side": "left",
+     "name": null,
+     "text": "not me",
+     "time": "7:11 PM"
+    },
+    {
+     "type": "message",
+     "side": "left",
+     "name": "Sam",
+     "text": "same time next week?",
+     "time": "7:14 PM"
+    },
+    {
+     "type": "message",
+     "side": "left",
+     "name": "Mike",
+     "text": "",
+     "time": "7:15 PM",
+     "placeholder": "deleted"
+    }
+   ]
+  }
+ }
+}

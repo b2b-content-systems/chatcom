@@ -511,6 +511,19 @@ def test_a_header_between_rows_blocks_the_midnight_roll():
     assert "out of order" in e.value.what
 
 
+
+@pytest.mark.parametrize("shown", ["Sam.", "sam", "Samm", "SAM!"])
+def test_a_name_close_to_an_excluded_one_fails_closed(shown):
+    from chatcom import app
+    from chatcom.adapters.source import ParseResult
+    res = ParseResult([{"sender": shown}, {"sender": "Dave"}], 0, [], 2, {}, None, {}, "screenshots")
+    with pytest.raises(ChatcomError) as e:
+        app.check_screenshot_exclusions({"exclude": ["Sam"]}, res)
+    assert e.value.code == "CHATCOM_E_SPEAKER_UNMAPPED" and shown in e.value.what
+    app.check_screenshot_exclusions({"exclude": ["Sam"]}, ParseResult([{"sender": "Samantha Q"}], 0, [], 1, {},
+                                                                       None, {}, "screenshots"))
+
+
 def test_strip_png_keeps_only_the_pixels(tmp_path):
     f = tmp_path / "x.png"
     data = png(4, 4, shot="2026:01:09 19:00:00")
