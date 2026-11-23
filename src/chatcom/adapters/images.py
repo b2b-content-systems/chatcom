@@ -263,6 +263,29 @@ def _encode(src: Path, kind: str, dst: Path, name: str, crop: tuple[int, int, in
         cmd += ["-vf", f"crop={w}:{h}:{x}:{y}"]
     cmd += ["-c:v", "png", "-f", "image2", "-update", "1", "-y", f"file:{dst}"]
     _run(cmd, name)
+    strip_png(dst)
+
+
+# The only PNG chunks a copy keeps: what it takes to draw the pixels. Newer ffmpeg builds carry
+# EXIF (eXIf) and other frame data through -map_metadata -1, so the copy is cleaned here, whatever
+# the ffmpeg version.
+_KEEP = {b"IHDR", b"PLTE", b"tRNS", b"IDAT", b"IEND", b"gAMA", b"sRGB", b"cHRM", b"sBIT"}
+
+
+def strip_png(path: Path) -> None:
+    data = path.read_bytes()
+    if not data.startswith(b"\x89PNG\r\n\x1a\n"):
+        raise _unreadable(path.name, "the copy is not a PNG")
+    out, i = [data[:8]], 8
+    while i + 12 <= len(data):
+        n = struct.unpack(">I", data[i:i + 4])[0]
+        typ = data[i + 4:i + 8]
+        if typ in _KEEP:
+            out.append(data[i:i + 12 + n])
+        i += 12 + n
+        if typ == b"IEND":
+            break
+    path.write_bytes(b"".join(out))
 
 
 def tiles(width: int, height: int) -> list[tuple[int, int]]:
