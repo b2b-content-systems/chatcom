@@ -91,11 +91,39 @@ class Show:
     def state_path(self, code: str) -> Path:
         return self.episode_dir(code) / "state.json"
 
+    @property
+    def inbox(self) -> Path:
+        """Where the skill may put files to import (a saved paste, an export
+        the operator moved in). Session-mode imports read only from here or
+        the path given at `new`."""
+        return self.dir / "inbox"
+
+    @property
+    def secret_path(self) -> Path: return self.dir / "secret"
+
+    def key(self) -> bytes:
+        """The show's secret: every message id, cursor signature and phone
+        label is an HMAC keyed by it. Created once, mode 0600."""
+        p = self.secret_path
+        if p.is_file():
+            return bytes.fromhex(p.read_text("ascii").strip())
+        raise ChatcomError("CHATCOM_E_BIBLE_INVALID", f"show '{self.slug}' has no secret file",
+                           f"Restore {p} from a backup if you have one; otherwise run `chatcom migrate {self.slug}`, "
+                           "which makes a new one (message ids change, so the next episode resumes by time or "
+                           "by matching the last rows).", context={"path": str(p)})
+
+    def write_key(self, key: bytes) -> None:
+        self.dir.mkdir(parents=True, exist_ok=True)
+        fd = os.open(self.secret_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        with os.fdopen(fd, "w") as fh:
+            fh.write(key.hex() + "\n")
+
+
     def exists(self) -> bool:
         return self.bible_path.is_file()
 
     def create_dirs(self) -> None:
-        for sub in ("", "episodes", "logs", "snapshots"):
+        for sub in ("", "episodes", "logs", "snapshots", "inbox"):
             (self.dir / sub).mkdir(parents=True, exist_ok=True)
         try:
             os.chmod(self.dir, 0o700)
@@ -139,6 +167,17 @@ class Show:
         finally:
             path.unlink(missing_ok=True)
 
+    def lock_holder(self) -> dict | None:
+        """The live process holding this show's lock, or None."""
+        path = self.dir / ".lock"
+        try:
+            raw = path.read_text().strip()
+            started = datetime.fromtimestamp(path.stat().st_mtime, timezone.utc).isoformat(timespec="seconds")
+        except OSError:
+            return None
+        pid = int(raw) if raw.isdigit() else 0
+        return {"pid": pid, "since": started} if pid and _alive(pid) else None
+
     def snapshot_bible(self, code: str) -> Path:
         dst = self.dir / "snapshots" / f"bible.{code}.pre.json"
         if self.bible_path.is_file() and not dst.exists():
@@ -174,3 +213,7 @@ class RunLog:
     def write(self, line: str) -> None:
         with open(self.path, "a", encoding="utf-8") as fh:
             fh.write(f"{now()} {redact(line)}\n")
+
+
+def new_key() -> bytes:
+    return secrets.token_bytes(32)

@@ -100,6 +100,11 @@ def new_cast_sheet(bible: dict, photos: dict[str, str] | None = None) -> dict:
 
 def validate(bible: dict) -> None:
     v = bible.get("schema_version") if isinstance(bible, dict) else None
+    if isinstance(v, int) and v < SCHEMA_VERSION:
+        raise ChatcomError("CHATCOM_E_SCHEMA_OLD",
+                           f"this show was made by an older chatcom (schema_version {v}; this one reads {SCHEMA_VERSION})",
+                           f"Run `chatcom migrate {bible.get('show', {}).get('slug', '<show>')}`. It backs up the show first.",
+                           context={"schema_version": v})
     if isinstance(v, int) and v > SCHEMA_VERSION:
         raise ChatcomError("CHATCOM_E_SCHEMA_NEWER",
                            f"bible.json is schema_version {v}; this chatcom reads up to {SCHEMA_VERSION}",

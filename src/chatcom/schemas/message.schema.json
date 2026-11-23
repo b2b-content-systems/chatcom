@@ -2,58 +2,196 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/b2b-content-systems/chatcom/schemas/message.schema.json",
   "title": "CHATCOM normalized message",
-  "description": "One chat message after ingest. Every adapter (WhatsApp now; iMessage and Telegram later) writes this shape, one JSON object per line. System lines (joins, subject changes, the encryption notice) are not messages and never appear here.",
+  "description": "One chat message after ingest. Every adapter (WhatsApp, Telegram, transcripts, screenshots; later Messenger, Instagram, GroupMe, iMessage) writes this shape, one JSON object per line. System lines (joins, subject changes, the encryption notice) are not messages and never appear here.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["id", "sender", "time", "text", "media", "deleted", "edited", "reply_to", "reactions", "source"],
+  "required": [
+    "id",
+    "sender",
+    "time",
+    "time_precision",
+    "text",
+    "media",
+    "deleted",
+    "edited",
+    "reply_to",
+    "reactions",
+    "quote",
+    "source"
+  ],
   "properties": {
     "id": {
       "type": "string",
       "pattern": "^[0-9a-f]{16}$",
-      "description": "Content hash of (sender, UTC minute, ordinal within that sender-minute, normalized text). Stable across re-exports of the same chat, so overlapping exports de-duplicate."
+      "description": "Keyed hash (HMAC-SHA256 with the show's secret, 16 hex). exact/minute rows: (raw label, UTC minute, ordinal within label-minute, identity text). day/order rows: (raw label, day, identity text, previous row's label and identity text, run ordinal). Stable across re-exports and overlapping imports of the same chat."
     },
     "sender": {
       "type": "string",
       "minLength": 1,
-      "description": "Display name after aliases. A sender shown only as a phone number is masked ('Unnamed 1') until the operator sets an alias."
+      "description": "Display name after aliases and --speaker. A sender shown only as a phone number is masked ('Unnamed 1a2b3c') until the operator sets an alias."
     },
     "time": {
       "type": "string",
       "format": "date-time",
-      "description": "ISO 8601 with the show's UTC offset at that moment. WhatsApp exports carry local time with no zone; the show's timezone resolves it, including the repeated hour at a DST fall-back."
+      "description": "ISO 8601 with the show's UTC offset. For day and order rows the time is synthetic: strictly increasing in chat order, anchored to the date the source shows."
+    },
+    "time_precision": {
+      "enum": [
+        "exact",
+        "minute",
+        "day",
+        "order"
+      ],
+      "description": "How much of `time` the source really showed: exact (seconds or better), minute, day (a date, no time) or order (no date)."
     },
     "text": {
       "type": "string",
       "description": "Normalized text: NFC, invisible direction marks removed, the 'edited' marker removed. Empty for a media-only or deleted message."
     },
     "media": {
-      "enum": [null, "image", "video", "audio", "sticker", "gif", "document", "contact", "location", "poll", "other"],
+      "enum": [
+        null,
+        "image",
+        "video",
+        "audio",
+        "sticker",
+        "gif",
+        "document",
+        "contact",
+        "location",
+        "poll",
+        "other"
+      ],
       "description": "Kind of attachment when the export replaced it with a placeholder. CHATCOM never reads media files."
     },
-    "deleted": { "type": "boolean" },
-    "edited": { "type": "boolean" },
+    "deleted": {
+      "type": "boolean"
+    },
+    "edited": {
+      "type": "boolean"
+    },
     "reply_to": {
-      "type": ["string", "null"],
-      "description": "id of the message this one replies to. Always null for WhatsApp .txt exports (the format does not carry it)."
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "id of the message this one replies to, when the source carries it (Telegram). Null otherwise."
     },
     "reactions": {
-      "type": ["array", "null"],
+      "type": [
+        "array",
+        "null"
+      ],
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["sender", "emoji"],
-        "properties": { "sender": { "type": "string" }, "emoji": { "type": "string" } }
+        "required": [
+          "emoji",
+          "sender",
+          "count"
+        ],
+        "properties": {
+          "emoji": {
+            "type": "string"
+          },
+          "sender": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Null when the source shows only a count, as screenshots do."
+          },
+          "count": {
+            "type": "integer",
+            "minimum": 1
+          }
+        }
       },
-      "description": "Always null for WhatsApp .txt exports."
+      "description": "Null when the source does not carry reactions (WhatsApp .txt)."
     },
     "source": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["adapter", "line"],
+      "required": [
+        "adapter",
+        "label"
+      ],
       "properties": {
-        "adapter": { "enum": ["whatsapp", "imessage", "telegram", "synthetic"] },
-        "line": { "type": "integer", "minimum": 1, "description": "First line of the message in the export file." }
-      }
+        "adapter": {
+          "enum": [
+            "whatsapp",
+            "telegram",
+            "transcript",
+            "screenshots",
+            "messenger",
+            "instagram",
+            "groupme",
+            "imessage",
+            "synthetic"
+          ]
+        },
+        "label": {
+          "type": "string",
+          "description": "The sender exactly as the source showed it, before aliases (a phone number is replaced by its label). Ids use it, so renaming never changes an id."
+        },
+        "line": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "First line of the message in a text export."
+        },
+        "image": {
+          "type": "string",
+          "description": "Screenshot copy the row came from."
+        },
+        "row": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Row index in that image."
+        }
+      },
+      "oneOf": [
+        {
+          "required": [
+            "line"
+          ]
+        },
+        {
+          "required": [
+            "image",
+            "row"
+          ]
+        },
+        {
+          "properties": {
+            "adapter": {
+              "const": "telegram"
+            }
+          }
+        }
+      ]
+    },
+    "quote": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "additionalProperties": false,
+      "required": [
+        "sender",
+        "text"
+      ],
+      "properties": {
+        "sender": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "description": "A quoted reply as the source shows it. Exclusion removes quotes by excluded senders."
     }
   }
 }

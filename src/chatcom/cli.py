@@ -44,11 +44,14 @@ def _pair(s: str) -> tuple[str, str]:
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="chatcom", description="Turn your group chat into your favorite TV series.")
     p.add_argument("--version", action="version", version=f"chatcom {__version__}")
-    p.add_argument("--json", action="store_true", help="print errors as a JSON envelope on stderr")
+    p.add_argument("--json", action="store_true",
+                   help="machine output: results as JSON on stdout, errors as a JSON envelope on stderr")
     sub = p.add_subparsers(dest="cmd", required=True)
 
-    s = sub.add_parser("new", help="create a show from a WhatsApp export and run setup")
-    s.add_argument("export", nargs="?")
+    s = sub.add_parser("new", help="create a show from a chat export and run setup")
+    s.add_argument("export", nargs="*")
+    s.add_argument("--source", help="force the source adapter (whatsapp, telegram, transcript, screenshots)")
+    s.add_argument("--thread", help="pick one chat in a multi-chat export")
     s.add_argument("--setup", help="setup.json with the first-run answers")
     s.add_argument("--show", dest="slug")
     s.add_argument("--title")
@@ -67,19 +70,20 @@ def build_parser() -> argparse.ArgumentParser:
                       ("episode", "make this week's episode (this release stops after the writer: beats.json)")):
         e = sub.add_parser(name, help=hlp)
         e.add_argument("show", nargs="?")
-        e.add_argument("--export", required=True)
+        e.add_argument("--export", required=True, nargs="+", help="the export file, a folder, or several image files")
+        e.add_argument("--source", help="force the source adapter (whatsapp, telegram, transcript, screenshots)")
+        e.add_argument("--thread", help="pick one chat in a multi-chat export")
         e.add_argument("--since", type=_date)
         e.add_argument("--until", type=_date)
         e.add_argument("--bottle", action="store_true")
         e.add_argument("--max-days", type=int, default=14)
         e.add_argument("--max-unparsed", type=float, default=app.MAX_UNPARSED)
-        if name == "ingest":
-            e.add_argument("--confirmed", action="store_true")
-        else:
+        e.add_argument("--accept-data-flow", action="store_true",
+                       help="the operator has read the data-flow notice and agrees")
+        if name != "ingest":
             e.add_argument("--writer", choices=["anthropic", "replay", "session"], default="anthropic")
             e.add_argument("--writer-model", default=os.environ.get("CHATCOM_WRITER_MODEL"))
             e.add_argument("--replay", help="recorded writer responses (with --writer replay)")
-            e.add_argument("--accept-data-flow", action="store_true")
             e.add_argument("--dry-run", action="store_true")
             e.add_argument("--token-budget", type=int, default=12_000)
 
@@ -92,6 +96,10 @@ def build_parser() -> argparse.ArgumentParser:
     w.add_argument("--file", required=True)
     w.add_argument("--model", required=True, help="the model that wrote the draft, as the session reports it")
 
+    st = sub.add_parser("status", help="where this week's episode stands, and the next command")
+    st.add_argument("show", nargs="?")
+    mg = sub.add_parser("migrate", help="upgrade a show made by an older chatcom (backs it up first)")
+    mg.add_argument("show", nargs="?")
     sub.add_parser("shows", help="list shows")
     sub.add_parser("doctor", help="check this computer for what chatcom needs")
     return p
@@ -99,6 +107,16 @@ def build_parser() -> argparse.ArgumentParser:
 
 def _tty() -> bool:
     return sys.stdin.isatty()
+
+
+def emit(args, data: dict, lines: list[str]) -> None:
+    """Human lines (the last one is the artifact path when there is one), or
+    one JSON object with --json."""
+    if getattr(args, "json", False):
+        print(json.dumps(data, ensure_ascii=False, default=str))
+    else:
+        for ln in lines:
+            print(ln)
 
 
 def _setup_from(args) -> dict:
@@ -126,7 +144,7 @@ def cmd_new(args) -> int:
         print(json.dumps(app.setup_template(), indent=2))
         return 0
     if not args.export:
-        raise ChatcomError("CHATCOM_E_USAGE", "no export given", "Run `chatcom new <export.zip|export.txt>`.")
+        raise ChatcomError("CHATCOM_E_USAGE", "no export given", "Run `chatcom new <export.zip|export.txt|folder>`.")
     setup = _setup_from(args)
     if "operator_sender" not in setup:
         if not _tty():
@@ -137,31 +155,39 @@ def cmd_new(args) -> int:
             t = input("Show title (Enter to let the writer name it): ").strip()
             if t:
                 setup["title"] = t
-    show, info = app.new_show(args.export, setup, tz=setup.get("timezone") or _local_tz(), max_unparsed=args.max_unparsed)
-    print(f"show '{info['slug']}' created from {info['messages']} messages "
-          f"({info['format']['platform']}, {info['format']['date_order']}, {info['format']['clock']}; "
-          f"{info['unparsed_rate']:.1%} of lines unparsed)")
-    print(f"cast: {', '.join(info['cast'])}")
+    show, info = app.new_show(args.export, setup, tz=setup.get("timezone") or _local_tz(), max_unparsed=args.max_unparsed,
+                              source=args.source, thread=args.thread)
+    fmt = ", ".join(str(v) for v in info["format"].values() if v)
+    lines = [f"show '{info['slug']}' created from {info['messages']} messages "
+             f"({info['source']}: {fmt}; {info['unparsed_rate']:.1%} of lines unparsed)",
+             f"cast: {', '.join(info['cast'])}"]
     if info["chorus"]:
-        print(f"chorus: {', '.join(info['chorus'])}")
+        lines.append(f"chorus: {', '.join(info['chorus'])}")
     if info["masked"]:
-        print(f"{info['masked']} sender(s) shown only as a phone number are masked as 'Unnamed xxxx'; "
-              "add them to aliases in setup.json to name them")
-    print(show.bible_path)
+        lines.append(f"{info['masked']} sender(s) shown only as a phone number are masked as 'Unnamed xxxxxx'; "
+                     "add them to aliases in setup.json to name them")
+    lines.append(f"next week's export goes in {info['inbox']} (or the same path as this one)")
+    lines.append(str(show.bible_path))
+    emit(args, {**info, "bible": str(show.bible_path)}, lines)
     return 0
 
 
 def cmd_ingest(args) -> int:
     show = app.resolve_show(args.show)
-    path, win, st = app.ingest(show, args.export, confirmed=args.confirmed, mode="session", since=args.since,
+    path, win, st = app.ingest(show, args.export, accepted=args.accept_data_flow, mode="session", since=args.since,
                                until=args.until, bottle=args.bottle, max_days=args.max_days,
-                               max_unparsed=args.max_unparsed)
-    print(f"{st['episode']}: {len(win.messages)} messages from {win.start:%Y-%m-%d %H:%M} to {win.end:%Y-%m-%d %H:%M} "
-          f"({st['unparsed_rate']:.1%} of lines unparsed)")
+                               max_unparsed=args.max_unparsed, source=args.source, thread=args.thread)
+    lines = [f"{st['episode']}: {len(win.messages)} messages from {win.start:%Y-%m-%d %H:%M} to {win.end:%Y-%m-%d %H:%M} "
+             f"(source {st['source']}, resumed by {win.method}; {st['unparsed_rate']:.1%} of lines unparsed)"]
     if win.gap:
-        print(f"skipped {win.gap['skipped']} older unread messages (over the {args.max_days}-day cap)")
-    print(f"next: chatcom write-prep {show.slug}")
-    print(path)
+        lines.append(f"skipped {win.gap['skipped']} older unread messages (over the {args.max_days}-day cap)")
+    if win.warning:
+        print(f"warning {win.warning['code']}: {win.warning['what']} ({win.warning['from']} to {win.warning['to']}). "
+              f"fix: {win.warning['fix']}", file=sys.stderr)
+    lines += [f"next: chatcom write-prep {show.slug}", str(path)]
+    emit(args, {"episode": st["episode"], "stage": st["stage"], "messages": len(win.messages), "source": st["source"],
+                "resume": win.method, "warning": win.warning, "gap": win.gap, "messages_path": str(path),
+                "next_command": f"chatcom write-prep {show.slug}"}, lines)
     return 0
 
 
@@ -169,7 +195,8 @@ def cmd_episode(args) -> int:
     show = app.resolve_show(args.show)
     if args.dry_run:
         info = app.dry_run(show, args.export, since=args.since, until=args.until, bottle=args.bottle,
-                           max_days=args.max_days, max_unparsed=args.max_unparsed, token_budget=args.token_budget)
+                           max_days=args.max_days, max_unparsed=args.max_unparsed, token_budget=args.token_budget,
+                           source=args.source, thread=args.thread, operator_typed=_tty())
         print(json.dumps(info, indent=2, ensure_ascii=False))
         return 0
     if args.writer == "session":
@@ -189,27 +216,40 @@ def cmd_episode(args) -> int:
             setup = app.store.read_json(show.setup_path) if show.setup_path.exists() else {}
             text = app.notice("anthropic", setup.get("exclude", []))
             if not _tty():
-                raise ChatcomError("CHATCOM_E_NO_TERMINAL", "the data-flow notice needs an answer and there is no terminal",
-                                   "Read the notice in docs/data-flow.md, then pass --accept-data-flow.",
-                                   context={"notice": text})
+                raise ChatcomError("CHATCOM_E_AWAITING_CONFIRMATION", text,
+                                   "Ask the operator. If they agree, run the same command with --accept-data-flow.",
+                                   recovery="ask", context={"mode": "anthropic", "notice": text})
             print(text, file=sys.stderr)
             confirmed = input("Continue? [y/N] ").strip().lower() in ("y", "yes")
             if not confirmed:
                 print("Stopped. Nothing left this computer.", file=sys.stderr)
                 return 0
-    app.ingest(show, args.export, confirmed=True, mode=writer.mode, since=args.since, until=args.until,
-               bottle=args.bottle, max_days=args.max_days, max_unparsed=args.max_unparsed)
+    _, win, _ = app.ingest(show, args.export, accepted=True, mode=writer.mode, since=args.since, until=args.until,
+                           bottle=args.bottle, max_days=args.max_days, max_unparsed=args.max_unparsed,
+                           source=args.source, thread=args.thread)
+    if win.warning:
+        print(f"warning {win.warning['code']}: {win.warning['what']}. fix: {win.warning['fix']}", file=sys.stderr)
     res = app.run_writer(show, writer, token_budget=args.token_budget)
-    print(f"{res['episode']} drafted by {res['model']} in {res['attempts']} attempt(s)")
-    print(f"bible after this episode (applied when the episode is committed): {res['bible_next']}")
-    print("render and commit arrive with Next Step 4")
-    print(res["beats"])
+    # Writer calls are billed only in CLI mode with your key; replay costs nothing.
+    billed = res["attempts"] if writer.mode == "anthropic" else 0
+    emit(args, {"episode_path": res["beats"], "stage": "drafted", "model": res["model"], "calls_billed": billed,
+                "attempts": res["attempts"], "bible_next": res["bible_next"], "source": win_source(show, res)},
+         [f"{res['episode']} drafted by {res['model']} in {res['attempts']} attempt(s) "
+          f"(source {win_source(show, res)}, resumed by {win.method})",
+          f"bible after this episode (applied when the episode is committed): {res['bible_next']}",
+          "render and commit arrive with Next Step 4", res["beats"]])
     return 0
+
+
+def win_source(show, res) -> str:
+    st = app.store.read_json(show.state_path(res["episode"]))
+    return st.get("source") or "unknown"
 
 
 def cmd_write_prep(args) -> int:
     show = app.resolve_show(args.show)
-    print(app.write_prep(show, token_budget=args.token_budget))
+    path = app.write_prep(show, token_budget=args.token_budget)
+    emit(args, {"bundle": str(path)}, [str(path)])
     return 0
 
 
@@ -224,8 +264,31 @@ def cmd_write_submit(args) -> int:
         doc = None
         print(f"warning: {p.name} is not JSON (line {e.lineno}: {e.msg})", file=sys.stderr)
     res = app.submit(show, doc, model=args.model, mode="session", draft_path=p)
-    print(f"{res['episode']} drafted ({res['attempts']} attempt(s), model reported: {res['model']})")
-    print(res["beats"])
+    emit(args, {"episode_path": res["beats"], "stage": "drafted", "model": res["model"], "calls_billed": 0,
+                "attempts": res["attempts"]},
+         [f"{res['episode']} drafted ({res['attempts']} attempt(s), model reported: {res['model']})", res["beats"]])
+    return 0
+
+
+def cmd_status(args) -> int:
+    info = app.status(app.resolve_show(args.show))
+    lock = f"held by process {info['lock']['pid']} since {info['lock']['since']}" if info["lock"] else "free"
+    emit(args, info, [f"{info['show']} {info['episode']}: {info['stage']}"
+                      f" (attempts {info['attempts']}, prep cycle {info['prep_cycles']}, source {info['source'] or '-'})",
+                      f"lock: {lock}", f"next: {info['next']}"])
+    return 0
+
+
+def cmd_migrate(args) -> int:
+    info = app.migrate(args.show)
+    if info.get("new_secret"):
+        emit(args, info, [f"{info['show']} had no secret file; made a new one. Message ids change, so the next "
+                          "episode resumes by time or by matching the last rows."])
+    elif not info["changed"]:
+        emit(args, info, [f"{info['show']} is already schema_version {info['to']}; nothing to do"])
+    else:
+        emit(args, info, [f"{info['show']} upgraded from schema_version {info['from']} to {info['to']}",
+                          f"backup: {info['backup']}"])
     return 0
 
 
@@ -247,7 +310,8 @@ def cmd_doctor(args) -> int:
 
 
 COMMANDS = {"new": cmd_new, "ingest": cmd_ingest, "episode": cmd_episode, "write-prep": cmd_write_prep,
-            "write-submit": cmd_write_submit, "shows": cmd_shows, "doctor": cmd_doctor}
+            "write-submit": cmd_write_submit, "status": cmd_status, "migrate": cmd_migrate, "shows": cmd_shows,
+            "doctor": cmd_doctor}
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -257,6 +321,16 @@ def main(argv: list[str] | None = None) -> int:
         return COMMANDS[args.cmd](args)
     except ChatcomError as e:
         if args.json:
+            if e.code == "CHATCOM_E_AWAITING_CONFIRMATION":
+                import shlex
+                argv_now = argv if argv is not None else sys.argv[1:]
+                nxt = e.context.get("next_command")
+                if not nxt:
+                    nxt = "chatcom " + shlex.join(argv_now)
+                    if "--accept-data-flow" not in argv_now:
+                        nxt += " --accept-data-flow"
+                print(json.dumps({"notice_text": e.context.get("notice", e.what),
+                                  "data_flow": e.context.get("mode"), "next_command": nxt}, ensure_ascii=False))
             print(json.dumps(e.envelope(), ensure_ascii=False), file=sys.stderr)
         else:
             print(e.human(), file=sys.stderr)

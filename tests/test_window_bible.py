@@ -24,7 +24,8 @@ def test_first_episode_is_last_seven_days():
     w = window.select(CHAT, None)
     assert w.end - w.start <= timedelta(days=7)
     assert w.messages[-1] is CHAT[-1] and w.gap is None
-    assert w.cursor == {"minute": utc_minute(datetime.fromisoformat(CHAT[-1]["time"])), "hash": CHAT[-1]["id"]}
+    assert {k: w.cursor[k] for k in ("minute", "hash")} == {"minute": utc_minute(datetime.fromisoformat(CHAT[-1]["time"])), "hash": CHAT[-1]["id"]}
+    assert w.cursor["adapter"] == "whatsapp" and w.cursor["precision"] == "minute" and len(w.cursor["signature"]["raw"]) == 5
 
 
 def test_next_episode_starts_after_the_cursor_and_dedupes_overlap():
@@ -77,7 +78,7 @@ def _bible():
 
 
 WIN = {"from": "2026-01-01T00:00:00+00:00", "to": "2026-01-02T00:00:00+00:00",
-       "cursor": {"minute": "2026-01-02T00:00Z", "hash": "a" * 16}, "message_count": 5, "gap": None}
+       "cursor": {"minute": "2026-01-02T00:00Z", "hash": "a" * 16, "adapter": "whatsapp", "precision": "minute", "signature": {"raw": [], "canonical": []}}, "message_count": 5, "gap": None}
 WRITER = {"mode": "replay", "model": "replay", "attempts": 1}
 
 

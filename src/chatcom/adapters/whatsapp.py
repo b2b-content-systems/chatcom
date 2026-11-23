@@ -19,7 +19,6 @@ Every parse reports its unparsed-line rate; the caller fails above 2%.
 """
 from __future__ import annotations
 
-import hashlib
 import re
 import unicodedata
 import zipfile
@@ -29,8 +28,12 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+from chatcom.adapters.source import ParseResult
 from chatcom.core.errors import ChatcomError
+from chatcom.core.masking import alias_map, canonical, is_phone, mask_numbers, phone_label  # noqa: F401 (re-exported)
 from chatcom.core.messages import message_hash, normalize_text, utc_minute
+
+_alias_map = alias_map  # the shipped name, kept for callers
 
 MAX_TXT_BYTES = 256 * 1024 * 1024
 
@@ -79,24 +82,6 @@ _SYSTEM_PHRASES = re.compile(
     re.I)
 _ENCRYPTION = ("end-to-end encrypted", "ende-zu-ende-verschlüsselt", "cifrados de extremo a extremo",
                "protegidas com a criptografia de ponta a ponta", "chiffrés de bout en bout")
-_PHONE = re.compile(r"^\+?[\d\s()\-‑.]{7,}$")
-# A phone number inside message text: 10+ digits with phone separators only
-# (dates and times have fewer digits or other separators).
-# A run of digits joined by anything a phone number is written with. The scan
-# runs on a copy of the text where every Unicode space is " " and every dash,
-# minus or middle dot is "-", so exotic separators cannot hide a number.
-_DIGIT_RUN = re.compile(r"\+?\d(?:[\d ()\-./]*\d)?")
-MIN_MASK_DIGITS = 9     # Spanish and Portuguese mobiles have 9
-SHORT_PHONE_DIGITS = 7  # 7-8 digit local numbers: masked when grouped or after a phone word
-MAX_PHONE_DIGITS = 15   # E.164; a longer run outside a link is masked whole
-_DATE_LIKE = re.compile(r"^(\d{4}-\d{1,2}-\d{1,2}|\d{1,2}[./-]\d{1,2}[./-](\d{4}|\d{2}))( \d{1,2})?$")
-_DECIMAL = re.compile(r"^[1-9]\d?\.\d{1,6}$")
-_YEAR_RANGE = re.compile(r"^(19|20)\d\d ?- ?(19|20)\d\d$")
-_GROUPED = re.compile(r"\d[ -]\d")
-_PHONE_WORD = re.compile(r"(tel|telefon|telephone|téléphone|phone|call|cell|mobile|handy|ruf|liga|llama|"
-                         r"appelle|número|numero|nummer|nº|no\.|durchwahl|fax|whatsapp|zap)\W{0,3}$", re.I)
-_URL = re.compile(r"(?:[a-z][a-z0-9+.-]*://|www\.)\S+", re.I)
-_PCT_PLUS = re.compile(r"%2B", re.I)
 
 
 @dataclass
@@ -106,25 +91,6 @@ class _Raw:
     t: tuple[int, int, int, str | None]
     rest: str
     extra: list[str] = field(default_factory=list)
-
-
-@dataclass
-class ParseResult:
-    messages: list[dict]
-    system_lines: int
-    unparsed: list[tuple[int, str]]
-    header_lines: int
-    fmt: dict
-    group_name: str | None
-    masked: dict[str, str]
-
-    @property
-    def unparsed_rate(self) -> float:
-        total = self.header_lines + len(self.unparsed)
-        return len(self.unparsed) / total if total else 1.0
-
-    def senders(self) -> Counter:
-        return Counter(m["sender"] for m in self.messages)
 
 
 # ---- reading the export --------------------------------------------------
@@ -209,7 +175,8 @@ def _match(line: str):
     return IOS_HEADER.match(probe), ANDROID_HEADER.match(probe), probe
 
 
-def parse(text: str, tz_name: str, *, aliases: dict[str, list[str]] | None = None) -> ParseResult:
+def parse(text: str, tz_name: str, *, aliases: dict[str, list[str]] | None = None,
+          key: bytes | None = None) -> ParseResult:
     try:
         tz = ZoneInfo(tz_name)
     except Exception:
@@ -267,7 +234,7 @@ def parse(text: str, tz_name: str, *, aliases: dict[str, list[str]] | None = Non
         if ": " in body:
             candidate[normalize_text(body.split(": ", 1)[0])] += 1
 
-    alias_map = _alias_map(aliases or {})
+    amap = alias_map(aliases or {})
     masked: dict[str, str] = {}
     group_name = None
     system = 0
@@ -295,25 +262,28 @@ def parse(text: str, tz_name: str, *, aliases: dict[str, list[str]] | None = Non
             system += 1
             continue
         text, media, deleted, edited = _content(raw_text)
-        text = mask_numbers(text, alias_map)
-        name = _canonical(sender_n, alias_map, masked)
+        text = mask_numbers(text, amap, key)
+        name = canonical(sender_n, amap, masked, key)
+        label = phone_label(sender_n, key) if is_phone(sender_n) else sender_n
         minute = utc_minute(aware)
-        key = (name, minute)
-        ordinal = ordinals[key]
-        ordinals[key] += 1
+        slot = (label, minute)
+        ordinal = ordinals[slot]
+        ordinals[slot] += 1
         msgs.append({
-            "id": message_hash(name, minute, ordinal, text, media, deleted),
+            "id": message_hash(label, minute, ordinal, text, media, deleted, key),
             "sender": name,
             "time": aware.isoformat(timespec="seconds"),
+            "time_precision": "minute",
             "text": text,
             "media": media,
             "deleted": deleted,
             "edited": edited,
             "reply_to": None,
             "reactions": None,
-            "source": {"adapter": "whatsapp", "line": line_no},
+            "quote": None,
+            "source": {"adapter": "whatsapp", "line": line_no, "label": label},
         })
-    return ParseResult(msgs, system, unparsed, len(rows), fmt, group_name, masked)
+    return ParseResult(msgs, system, unparsed, len(rows), fmt, group_name, masked, "whatsapp")
 
 
 def _date_order(raws: list[_Raw]) -> str:
@@ -429,99 +399,47 @@ def _content(raw: str) -> tuple[str, str | None, bool, bool]:
     return text, None, False, edited
 
 
-def _digits(s: str) -> str:
-    return re.sub(r"\D", "", s)
 
 
-def _phone_key(s: str) -> str:
-    # The last 10 digits: the same number written with or without its
-    # country code (+1 555 010 2233, 555.010.2233) is one person.
-    return _digits(s)[-10:]
+# ---- registry hooks ----------------------------------------------------------
 
-
-def _alias_map(aliases: dict[str, list[str]]) -> dict[str, str]:
-    out: dict[str, str] = {}
-    for canon, others in aliases.items():
-        for o in [canon, *others]:
-            o = normalize_text(o)
-            out[o.casefold()] = canon
-            if _PHONE.match(o):
-                out["#" + _phone_key(o)] = canon
-                out["#9" + _digits(o)[-9:]] = canon  # a national number without its country code
-    return out
-
-
-def phone_label(number: str) -> str:
-    """A stable stand-in for a phone number: the same number gets the same
-    label in every export, whatever order people appear in."""
-    return "Unnamed " + hashlib.sha256(_phone_key(number).encode()).hexdigest()[:6]
-
-
-def _canonical(sender: str, alias_map: dict[str, str], masked: dict[str, str]) -> str:
-    if sender.casefold() in alias_map:
-        return alias_map[sender.casefold()]
-    if _PHONE.match(sender):
-        key = "#" + _phone_key(sender)
-        if key in alias_map:
-            return alias_map[key]
-        masked.setdefault(sender, phone_label(sender))
-        return masked[sender]
-    return sender
-
-
-def _scan_copy(text: str) -> str:
-    """Same length as text: Unicode spaces become " ", dashes, minus signs and
-    middle dots become "-", so the digit scan sees every separator."""
-    out = []
-    for ch in text:
-        cat = unicodedata.category(ch)
-        if cat == "Zs" or ch == "\t":
-            out.append(" ")
-        elif cat == "Pd" or ch in "−·‧・":
-            out.append("-")
-        else:
-            out.append(ch)
-    return "".join(out)
-
-
-def mask_numbers(text: str, alias_map: dict[str, str]) -> str:
-    """Phone numbers never leave in message text. A number with an alias
-    becomes that name; any other becomes its stable 'Unnamed' label (a WhatsApp
-    @mention of an unsaved contact is written as their number, so it maps to
-    the same label as their messages). Fails closed: a run of 9 or more digits
-    is masked unless it is plainly a date or a short decimal; a 7-8 digit run is
-    masked when grouped like a phone or after a phone word; inside a link,
-    every phone-like run is masked and only ids over 15 digits stay."""
-    if not text:
-        return text
-    scan = _scan_copy(text)
-    links = [(m.start(), m.end()) for m in _URL.finditer(scan)]
-    pieces, pos = [], 0
-    for m in _DIGIT_RUN.finditer(scan):
-        start, end = m.start(), m.end()
-        number = scan[start:end]
-        digits = _digits(number)
-        in_link = any(a <= start < b for a, b in links)
-        plus = number.startswith("+") or (start >= 3 and bool(_PCT_PLUS.fullmatch(scan[start - 3:start])))
-        if in_link:
-            mask = (plus and len(digits) >= SHORT_PHONE_DIGITS) or MIN_MASK_DIGITS <= len(digits) <= MAX_PHONE_DIGITS
-        elif _DATE_LIKE.match(number) and not plus:
-            mask = False  # 2026-01-15, 15.01.2026, 15/01/26 (and an hour after it)
-        elif len(digits) >= MIN_MASK_DIGITS:
-            spare = _DATE_LIKE.match(number) or (_DECIMAL.match(number) and len(digits) < MIN_MASK_DIGITS)
-            mask = not spare
-        elif len(digits) >= SHORT_PHONE_DIGITS:
-            grouped = bool(_GROUPED.search(number)) and not _YEAR_RANGE.match(number) and "." not in number
-            mask = grouped or bool(_PHONE_WORD.search(scan[max(0, start - 16):start]))
-        else:
-            mask = False
-        if not mask:
+def _whatsapp_lines(text: str) -> tuple[int, int]:
+    """(lines that read as WhatsApp message headers, non-blank lines) in a sample."""
+    hits = total = 0
+    for ln in text.replace("\r\n", "\n").split("\n")[:400]:
+        if not ln.strip():
             continue
-        label = None
-        if len(digits) <= MAX_PHONE_DIGITS:
-            label = alias_map.get("#" + _phone_key(number)) or alias_map.get("#9" + digits[-9:])
-        pieces.append(text[pos:start])
-        pieces.append(label or phone_label(number))
-        pos = end
-    pieces.append(text[pos:])
-    return "".join(pieces)
+        total += 1
+        i, a, _ = _match(ln)
+        hits += bool(i or a)
+    return hits, total
+
+
+def _looks_whatsapp(text: str) -> bool:
+    hits, total = _whatsapp_lines(text)
+    return hits >= 2 and hits >= 0.3 * total or (hits == 1 and total <= 3)
+
+
+def matches_container(paths: list[Path]) -> bool:
+    """A .zip is WhatsApp's unless it holds no text file at all. WhatsApp is
+    the only zip source, so a broken zip or one with several text files is
+    claimed here and read_export reports the exact CHATCOM_E_EXPORT_ZIP."""
+    if len(paths) != 1 or not paths[0].is_file() or paths[0].suffix.lower() != ".zip":
+        return False
+    try:
+        with zipfile.ZipFile(paths[0]) as zf:
+            return any(i.filename.lower().endswith(".txt") and not i.is_dir() for i in zf.infolist())
+    except (zipfile.BadZipFile, OSError):
+        return True
+
+
+def matches_text(paths: list[Path]) -> bool:
+    if len(paths) != 1 or not paths[0].is_file() or paths[0].suffix.lower() in (".zip", ".json"):
+        return False
+    from chatcom.adapters.registry import peek
+    return _looks_whatsapp(peek(paths[0]))
+
+
+def load(paths: list[Path], ctx) -> tuple[ParseResult, str]:
+    text, display = read_export(paths[0])
+    return parse(text, ctx.tz, aliases=ctx.aliases, key=ctx.key), display

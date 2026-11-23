@@ -5,15 +5,47 @@
   "description": "The images a show owns: the pinned image model, the style sheet, each member's pose set and the background library. Casting (Next Step 3) fills it; until then it holds the fixed pose vocabulary and the three starter backgrounds with no files, so the writer can already choose ids.",
   "type": "object",
   "additionalProperties": false,
-  "patternProperties": { "^_": true },
-  "required": ["schema_version", "image_model", "style_sheet", "poses", "members", "backgrounds"],
+  "patternProperties": {
+    "^_": true
+  },
+  "required": [
+    "schema_version",
+    "image_model",
+    "style_sheet",
+    "poses",
+    "members",
+    "backgrounds"
+  ],
   "properties": {
-    "schema_version": { "const": 1 },
-    "image_model": { "type": ["string", "null"], "description": "Pinned per show; every image of the show uses it. null before casting." },
-    "style_sheet": { "type": ["string", "null"], "description": "Path of the show style-sheet image, relative to the show folder." },
+    "schema_version": {
+      "const": 2
+    },
+    "image_model": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "Pinned per show; every image of the show uses it. null before casting."
+    },
+    "style_sheet": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "Path of the show style-sheet image, relative to the show folder."
+    },
     "poses": {
       "type": "array",
-      "items": { "enum": ["neutral", "talking", "laughing", "typing", "facepalm", "shrug"] },
+      "items": {
+        "enum": [
+          "neutral",
+          "talking",
+          "laughing",
+          "typing",
+          "facepalm",
+          "shrug"
+        ]
+      },
       "minItems": 1,
       "uniqueItems": true,
       "description": "The fixed pose vocabulary."
@@ -24,20 +56,67 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["name", "source", "reason", "photo", "poses"],
+        "required": [
+          "name",
+          "source",
+          "reason",
+          "photo",
+          "poses"
+        ],
         "properties": {
-          "name": { "type": "string", "minLength": 1 },
-          "source": { "enum": ["photo", "behavior"] },
-          "reason": { "enum": [null, "no_photo_supplied", "operator_choice", "provider_refused"] },
-          "photo": { "type": ["string", "null"], "description": "Reference photo path as supplied at setup." },
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "source": {
+            "enum": [
+              "photo",
+              "behavior"
+            ]
+          },
+          "reason": {
+            "enum": [
+              null,
+              "no_photo_supplied",
+              "operator_choice",
+              "provider_refused"
+            ]
+          },
+          "photo": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Reference photo path as supplied at setup."
+          },
           "poses": {
             "type": "object",
-            "propertyNames": { "enum": ["neutral", "talking", "laughing", "typing", "facepalm", "shrug"] },
+            "propertyNames": {
+              "enum": [
+                "neutral",
+                "talking",
+                "laughing",
+                "typing",
+                "facepalm",
+                "shrug"
+              ]
+            },
             "additionalProperties": {
               "type": "object",
               "additionalProperties": false,
-              "required": ["file", "key"],
-              "properties": { "file": { "type": "string" }, "key": { "type": "string", "pattern": "^[0-9a-f]{64}$" } }
+              "required": [
+                "file",
+                "key"
+              ],
+              "properties": {
+                "file": {
+                  "type": "string"
+                },
+                "key": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                }
+              }
             }
           }
         }
@@ -48,12 +127,35 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["id", "description", "file", "key"],
+        "required": [
+          "id",
+          "description",
+          "file",
+          "key"
+        ],
         "properties": {
-          "id": { "type": "string", "pattern": "^[a-z0-9_]{1,32}$" },
-          "description": { "type": "string", "minLength": 1, "maxLength": 160 },
-          "file": { "type": ["string", "null"] },
-          "key": { "type": ["string", "null"], "pattern": "^[0-9a-f]{64}$" }
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z0-9_]{1,32}$"
+          },
+          "description": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "file": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "key": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^[0-9a-f]{64}$"
+          }
         }
       }
     }

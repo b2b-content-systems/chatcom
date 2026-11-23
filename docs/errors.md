@@ -46,6 +46,8 @@ A name in setup or a flag is not a sender in the chat. The fix lists the closest
 ## chatcom_e_setup_invalid
 `setup.json` failed its schema. The error gives the JSON path, the bad value and what is allowed. Exit 2.
 
+Ingest also stops here, before reading any message, when `setup.json` excludes an `Unnamed xxxxxx` phone label that matches no sender in the export: labels are keyed by the show's secret and change after `chatcom migrate` or a new secret, so a stale one would silently stop excluding that person. The error lists the labels the export uses.
+
 ## chatcom_e_show_exists
 `chatcom new` was given a slug that already has a show. Exit 2.
 
@@ -61,11 +63,31 @@ More than one show exists and none was named. Exit 2.
 ## chatcom_e_schema_newer
 The bible was written by a newer chatcom. Upgrade chatcom. Exit 2.
 
+## chatcom_e_schema_old
+The show was made by an older chatcom. Run `chatcom migrate <show>`: it backs up the show, then upgrades it. Exit 2.
+
+## chatcom_e_source_ambiguous
+The export matches more than one kind of chat export. Pass `--source NAME` with one of the names listed. Exit 2.
+
+## chatcom_e_source_unknown
+The export is not a chat export chatcom knows, or its kind is not in this chatcom yet. A text file is read as a
+transcript only when its first line is `# source:` or `# speakers:` (docs/transcript-format.md), or with
+`--source transcript`. Exit 2.
+
+## chatcom_e_thread_required
+The export holds more than one chat. Pass `--thread NAME` with one of the chats listed. Exit 2.
+
+## chatcom_e_export_outside_inbox
+In skill mode (`chatcom ingest` for the session writer, and `chatcom episode --dry-run` without a terminal) chatcom
+reads only the export given at `chatcom new` or files in the show's inbox (`~/.chatcom/<show>/inbox/`). Other
+commands send nothing until `--accept-data-flow` is passed after the notice. Move the new export into the inbox and
+pass that path. Exit 2.
+
 ## chatcom_e_locked
 Another chatcom run holds this show's lock. A lock whose process is gone is cleared automatically. Exit 2.
 
 ## chatcom_e_state
-A step ran out of order (for example `write-submit` before `ingest --confirmed`, or on an episode that is already drafted). Exit 2.
+A step ran out of order (for example `write-submit` before `ingest --accept-data-flow`, or on an episode that is already drafted). `chatcom status <show>` prints the next command. Exit 2.
 
 ## chatcom_e_beats_invalid
 The writer's `beats.json` failed validation. Every problem is listed with its JSON path. Fix all of them and submit the whole file again. Attempts 1 and 2 exit 2; the third failure exits 4. Exit 2.
@@ -74,10 +96,10 @@ The writer's `beats.json` failed validation. Every problem is listed with its JS
 Unknown IANA timezone. Exit 2.
 
 ## chatcom_e_awaiting_confirmation
-`chatcom ingest` without `--confirmed` always stops here and prints the data-flow notice. No message is read or shown. The skill relays the notice to the operator and continues only after they agree. Exit 6.
+A command that would send chat text to a model stops here and prints the data-flow notice; no message is read or shown. `chatcom ingest` without `--accept-data-flow` always stops here, and so does `chatcom episode` with no terminal to ask. A command whose writer mode differs from the one the operator accepted at ingest stops here too, with the new notice. With `--json`, stdout carries `{notice_text, data_flow, next_command}`. The skill relays the notice to the operator and continues only after they agree. Exit 6.
 
 ## chatcom_e_writer_gave_up
-The writer failed validation three times. Nothing was saved. Fixed message: "Writer step did not complete. Nothing was saved. Rerun the skill, or run `chatcom episode <show> --export <export> --writer anthropic`." The last draft's path is in the context. Exit 4.
+The writer failed validation three times in one prep cycle (`write-prep` starts a new cycle; at most three per episode). Fixed message: "Writer step did not complete. No bible change. Draft kept at <path>. Ask the operator before switching modes: CLI mode sends chat text to Anthropic with your key, and to Google if the fallback fires." Side effects: partial (the draft and the episode state are kept). Exit 4.
 
 ## chatcom_e_writer_unavailable
 Neither Claude nor the Gemini fallback could answer (no key, expired key, rate limit, outage). The context names the env variables, never their values. Exit 4.
