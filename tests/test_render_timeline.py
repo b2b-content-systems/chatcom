@@ -63,7 +63,7 @@ def test_a_scene_that_cannot_fit_is_refused_when_the_script_is_validated():
     assert problems and problems[0]["path"] == "$.cold_open.bubbles" and "at most 5" in problems[0]["message"]
     with pytest.raises(ChatcomError) as e:  # a draft that skipped validation never renders half a scene
         render.timeline(b, sheet(b), None, show_title="X")
-    assert e.value.code == "CHATCOM_E_BEATS_INVALID"
+    assert e.value.code == "CHATCOM_E_BEATS_INVALID" and "chatcom ingest" in e.value.fix  # a path that works
 
 
 # Value: protects=the writer's validator refuses a draft the timeline cannot fit, and passes one it can;

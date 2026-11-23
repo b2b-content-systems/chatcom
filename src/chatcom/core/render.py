@@ -164,7 +164,9 @@ def _scene(seg: Segment, scene: dict, sheet: dict, offset: float) -> None:
         spots = place([b["text"] for b in scene["bubbles"]], seg.length)
     except ValueError:
         raise ChatcomError("CHATCOM_E_BEATS_INVALID", f"{seg.name}: its bubbles cannot fit in {seg.length:.1f} s",
-                           "This draft skipped validation: run `chatcom write-submit` again, which checks the fit.",
+                           "This draft was written before the bubble limit (chatcom 0.1.0.dev9): delete the "
+                           "episode's folder (episodes/<code>/ in the show) and run `chatcom ingest` again. "
+                           "Drawings already made are reused from the cache.",
                            context={"segment": seg.name}) from None
     for b, (a, z) in zip(scene["bubbles"], spots):
         if b["pose"] is not None:

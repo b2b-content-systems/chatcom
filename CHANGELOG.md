@@ -13,6 +13,8 @@ Next Step 4, part 1: the render timeline.
 ### Changed
 - The script check now also refuses a scene whose bubbles cannot fit their time slot, so the writer retries at write
   time instead of the render failing after casting.
+- An episode drafted on 0.1.0.dev8 or earlier with 6 bubbles in its 6-second cold open cannot render: delete its
+  folder (`episodes/<code>/` in the show) and run `chatcom ingest` again. Drawings already made are reused.
 
 ## 0.1.0.dev8 (2026-11-23)
 
