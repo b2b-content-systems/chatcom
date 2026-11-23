@@ -335,13 +335,24 @@ UNNAMED_LABEL = re.compile(r"^Speaker [A-Z]$")
 
 
 def check_screenshot_exclusions(setup: dict, res: ParseResult) -> None:
-    """Fail closed: in screenshots a person can be unnamed ("Speaker A") or
-    take the name above them, so with exclusions set, every speaker must be
-    named and every excluded name must be one this import found."""
+    """Fail closed: in screenshots a person can be unnamed ("Speaker A"),
+    take the name above them, or show a name a little different from the one
+    excluded ("Sam." for "Sam"). With exclusions set, every speaker must be
+    named, and a name close to an excluded one must be named exactly."""
     exclude = setup.get("exclude", [])
     if not exclude:
         return
     senders = set(res.senders())
+    import difflib
+    from chatcom.core.messages import identity_text
+    near = sorted(s for s in senders for x in exclude if s != x and (
+        identity_text(s) == identity_text(x) or difflib.SequenceMatcher(None, s.casefold(), x.casefold()).ratio() >= 0.8))
+    if near:
+        raise ChatcomError("CHATCOM_E_SPEAKER_UNMAPPED",
+                           f"these screenshots show {', '.join(near)}, close to someone the show excludes "
+                           f"({', '.join(exclude)})", "Nothing was sent to the writer. If it is the same person, add "
+                           "--speaker '<name as shown>=<excluded name>'; if not, add an alias in setup.json.",
+                           context={"near": near})
     unnamed = sorted(s for s in senders if UNNAMED_LABEL.match(s))
     if unnamed:
         raise ChatcomError("CHATCOM_E_SPEAKER_UNMAPPED",

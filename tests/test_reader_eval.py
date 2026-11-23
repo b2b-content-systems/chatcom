@@ -46,7 +46,7 @@ def test_each_metric_counts_its_own_mistake():
 
 @needs_ffmpeg
 def test_the_fixture_case_reports_the_carried_name_it_gets_wrong():
-    s = E.run_case(CASES / "lake", ReplayReader(CASES / "lake" / "reads.json"), tz=TZ, operator="Dave")
+    s = E.run_case(CASES / "lake", ReplayReader(CASES / "lake" / "reads.json"), tz=TZ, operator="Dave", cache_dir=None)
     # "not me" shows no name in the third screenshot: the join carries Theo's; gold says Mike
     assert (s.gold, s.found, s.recall, s.sender, s.order, s.dates) == (11, 11, 0.909, 0.909, 1.0, 1.0)
 
@@ -78,7 +78,7 @@ def test_the_score_names_the_model_that_answered():
 
     class Answered(ReplayReader):
         answered_by = Counter({"claude-sonnet-5-5": 3})
-    s = E.run_case(CASES / "lake", Answered(CASES / "lake" / "reads.json"), tz=TZ, operator="Dave")
+    s = E.run_case(CASES / "lake", Answered(CASES / "lake" / "reads.json"), tz=TZ, operator="Dave", cache_dir=None)
     assert s.reader == "claude-sonnet-5-5 x3"
 
 
@@ -86,3 +86,28 @@ def test_the_script_needs_at_least_one_case(tmp_path):
     r = subprocess.run([sys.executable, str(ROOT / "scripts" / "eval_reader.py"), str(tmp_path)],
                        capture_output=True, text=True)
     assert r.returncode == 2 and "no cases" in r.stderr
+
+
+
+def test_pairing_prefers_the_same_sender_for_repeated_text():
+    gold = msgs("A: lol\nB: lol\n")
+    assert E.compare(msgs("B: lol\n"), gold)["recall"] == 0.5
+    s = E.compare(msgs("B: lol\nA: lol\n"), gold)
+    assert s["sender"] == 1.0 and s["order"] == 0.5
+
+
+def test_unmasked_numbers_are_counted():
+    found = msgs("A: call 555 010 2233 now\nB: ok\n")
+    found[0]["text"] = "call 555 010 2233 now"  # as if masking had been skipped
+    assert E.phones(found) == 1 and E.phones(msgs("A: hi\n")) == 0
+
+
+def test_gemini_needs_consent_and_bad_cases_are_rows(tmp_path):
+    script = str(ROOT / "scripts" / "eval_reader.py")
+    r = subprocess.run([sys.executable, script, str(CASES), "--reader", "gemini"], capture_output=True, text=True)
+    assert r.returncode == 6 and "Google" in r.stderr and "Anthropic" in r.stderr
+    bad = tmp_path / "cases" / "broken"
+    (bad / "images").mkdir(parents=True)
+    (bad / "gold.txt").write_text("# source: screenshots\n# speakers: A\nA: hi\n", "utf-8")
+    out = subprocess.run([sys.executable, script, str(tmp_path / "cases")], capture_output=True, text=True).stdout
+    assert "| broken | error |" in out
