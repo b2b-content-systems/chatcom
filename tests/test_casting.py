@@ -393,3 +393,59 @@ def test_look_hints_stay_distinct_past_eight_members():
                        [dict(sparse, name=f"m{i}") for i in range(9)], "sitcom", None)
     neutral = [c for c in calls if c.pose == "neutral"]
     assert len({rules.content_key("m", c, []) for c in neutral}) == 9
+
+
+
+# ---- red-team fixes -----------------------------------------------------------------------------
+
+def test_names_and_nicknames_never_reach_a_prompt():
+    from chatcom.core import casting as rules
+    out = rules.scrub("Dave's lake house, near DAVE and Davey; Big D was there", ["Dave", "Big D"])
+    assert out == "a friend's lake house, near a friend and Davey; a friend was there"
+
+
+def test_a_timed_out_image_call_stays_counted(monkeypatch):
+    from chatcom.adapters import painter as painter_mod
+    monkeypatch.setenv("GEMINI_API_KEY", "k")
+    monkeypatch.setattr(painter_mod.time, "sleep", lambda s: None)
+
+    def slow(u, h, pl):
+        raise painter_mod.MaybeBilled("network: timed out")
+    p = GeminiPainter(transport=slow)
+    p.budget = 2
+    with pytest.raises(painter_mod.BudgetSpent):
+        p.paint("draw", [], "3:4")
+    assert p.calls == 2  # each sent call counts, and the cap stops the retries
+
+
+def test_an_error_stops_the_calls_not_yet_started():
+    import threading
+    from chatcom import casting as svc
+    started, lock = [], threading.Lock()
+
+    def fn(x):
+        with lock:
+            started.append(x)
+        if x == 0:
+            raise RuntimeError("stop")
+        return x
+    with pytest.raises(RuntimeError):
+        svc._each(fn, list(range(50)), 1)
+    assert started == [0]
+
+
+@needs_ffmpeg
+def test_prompts_sent_to_the_painter_hold_no_cast_name(lake_show, tmp_path, beats_s01e01, capsys, not_a_tty):
+    drafted(capsys, lake_show, tmp_path, beats_s01e01)
+    ep = lake_show.episode_dir("S01E01")
+    bible = json.loads((ep / "bible.next.json").read_text())
+    names = [n for m in bible["cast"] for n in (m["name"], *m.get("aliases", []))]
+    cast = json.loads(lake_show.cast_path.read_text("utf-8"))
+    n = len(casting.plan_for(lake_show, bible, cast, json.loads((ep / "beats.json").read_text())))
+    seen = []
+    painter = ReplayPainter()
+    real = painter.paint
+    painter.paint = lambda prompt, refs, aspect: (seen.append(prompt), real(prompt, refs, aspect))[1]
+    casting.cast(lake_show, painter, accepted=True, approve_calls=n, say=lambda m: None)
+    import re
+    assert seen and not any(re.search(rf"(?<!\w){re.escape(nm)}(?!\w)", s, re.I) for s in seen for nm in names)

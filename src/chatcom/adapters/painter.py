@@ -12,12 +12,16 @@ The operator's own GEMINI_API_KEY pays for every call; CHATCOM has no key."""
 from __future__ import annotations
 
 import hashlib
+import json
 import re
+import socket
 import shutil
 import subprocess
 import tempfile
 import threading
 import time
+import urllib.error
+import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -29,8 +33,33 @@ FALLBACK_MODEL = "gemini-3.1-flash-image"
 RETRIES = (2.0, 6.0, 15.0)
 MAX_TOKENS = 16384      # Nano Banana 2.1 thinks before it draws; 4096 cut it off (live, 2026-11-23)
 MAX_TOKENS_RETRY = 32768
+TIMEOUT = 240           # an image reply can take minutes; llm-fallback's 60s gave up on calls Google still billed
 _ACCOUNT = re.compile(r"API_KEY_INVALID|API key not valid|billing|permission_denied", re.I)
 _QUOTA = re.compile(r"\(429\)|quota|RESOURCE_EXHAUSTED", re.I)
+
+
+class MaybeBilled(lf.Unavailable):
+    """The request was sent and the reply never came (a timeout or a dropped
+    connection). Google may still finish and bill it, so the call stays counted."""
+
+
+def image_transport(url: str, headers: dict, payload: dict) -> tuple[int, dict]:
+    req = urllib.request.Request(url, data=json.dumps(payload).encode(), headers=headers, method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=TIMEOUT, context=lf._ssl_context()) as r:
+            return r.status, json.loads(r.read() or b"{}")
+    except urllib.error.HTTPError as e:
+        try:
+            body = json.loads(e.read() or b"{}")
+        except ValueError:
+            body = {}
+        return e.code, body
+    except urllib.error.URLError as e:  # no connection was made: nothing was sent
+        if isinstance(e.reason, (socket.timeout, TimeoutError)):
+            raise MaybeBilled(f"network: {e}") from e
+        raise lf.Unavailable(f"network: {e}") from e
+    except (socket.timeout, TimeoutError, ConnectionError) as e:
+        raise MaybeBilled(f"network: {e}") from e
 
 
 class BudgetSpent(Exception):
@@ -55,7 +84,7 @@ class GeminiPainter:
     def __init__(self, model: str | None = None, transport=None):
         self.requested = model
         self.model = model or DEFAULT_MODEL
-        self.transport = transport or lf.http_transport
+        self.transport = transport or image_transport
         self.backoff = RETRIES
         self.calls = 0
         self.budget: int | None = None  # set by the caller to the approved count; never exceeded
@@ -82,9 +111,11 @@ class GeminiPainter:
                 try:
                     return lf.ask_gemini(prompt, model=self.model, images=images, output="image",
                                          aspect_ratio=aspect, max_tokens=max_tokens, transport=self.transport)
+                except MaybeBilled:
+                    raise  # sent and maybe billed: the reserved call stays counted
                 except (lf.ModelGone, lf.Unavailable, lf.BadRequest):
                     with self._lock:
-                        self.calls -= 1  # an error is not billed: hand the reserved call back
+                        self.calls -= 1  # answered with an error, or never sent: not billed, hand the call back
                     raise
             except lf.ModelGone as e:
                 raise SwitchModel(redact(str(e))[:200]) from None

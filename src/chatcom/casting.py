@@ -14,7 +14,9 @@ so a show never mixes models."""
 from __future__ import annotations
 
 import copy
+import dataclasses
 import hashlib
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -29,9 +31,10 @@ EXT = {"image/png": ".png", "image/jpeg": ".jpg", "image/webp": ".webp"}
 
 NOTICE = {
     "gemini": ("Casting sends image prompts to Google (Gemini) with your GEMINI_API_KEY. Prompts are built from the "
-               "show's look and each cast member's role, traits and texting style (which can quote a few words "
-               "from the chat); names are never sent. Members with a reference photo: that photo (a clean copy, "
-               "no location or device data) goes too."),
+               "show's look and title, the new sets' descriptions, and each cast member's role, traits and texting "
+               "style (these come from the chat and can quote a few words of it). The cast's names and nicknames "
+               "are removed from every prompt before it is sent. Members with a reference photo: that photo (a clean "
+               "copy, no location or device data) goes too."),
     "replay": "Replay painter: nothing leaves this computer.",
 }
 
@@ -45,8 +48,9 @@ def _slug(name: str) -> str:
 
 
 class Run:
-    def __init__(self, show: store.Show, painter, model: str):
+    def __init__(self, show: store.Show, painter, model: str, names: list[str] = ()):
         self.show, self.painter, self.model = show, painter, model
+        self.names = list(names)  # the cast's names and nicknames, never sent
         self.cache = show.dir / "cache" / "images"
         self.made: dict[str, tuple[bytes, str, str]] = {}  # ref name -> (bytes, mime, key)
         self.paid = 0
@@ -58,6 +62,7 @@ class Run:
         return data, mime
 
     def draw(self, call: rules.Call, photos: dict[str, Path]):
+        call = dataclasses.replace(call, prompt=rules.scrub(call.prompt, self.names))
         refs = [self.ref(r, photos) for r in call.refs]
         key = rules.content_key(self.model, call, [_sha(d) for d, _ in refs])
         for ext in EXT.values():
@@ -170,9 +175,12 @@ def cast(show: store.Show, painter, *, accepted: bool, approve_calls: int | None
                     last_error = f"{model}: {e}"
                     say(f"casting: {model} cannot finish the batch ({e}); moving the whole batch to the next model")
             else:
+                fix = ("Run `chatcom cast` again later; images already made are kept." if not pinned else
+                       f"This show is cast with {pinned} and keeps that model. Run `chatcom cast` again later. If "
+                       "Google has retired the model, this show cannot add images until recasting is supported.")
                 raise ChatcomError("CHATCOM_E_PAINTER_UNAVAILABLE", f"no image model could finish casting: {last_error}",
-                                   "Run `chatcom cast` again later; images already made are kept.", recovery="retry",
-                                   side_effects="partial", context={"models": models})
+                                   fix, recovery="retry" if not pinned else "ask", side_effects="partial",
+                                   context={"models": models})
         except BudgetSpent:
             spent = painter.calls - calls_before
             raise ChatcomError("CHATCOM_E_AWAITING_CONFIRMATION",
@@ -204,7 +212,8 @@ def cast(show: store.Show, painter, *, accepted: bool, approve_calls: int | None
 def _batch(show, painter, model, base, bible_next, beats, photos, say):
     sheet = copy.deepcopy(base)
     sheet["image_model"] = model
-    run = Run(show, painter, model)
+    names = [n for m in bible_next["cast"] for n in (m["name"], *m.get("aliases", []))]
+    run = Run(show, painter, model, names)
     look, title = bible_next["show"]["look"], bible_next["show"].get("title")
     refused: list[str] = []
     by_name = {m["name"]: m for m in sheet["members"]}
@@ -245,8 +254,7 @@ def _batch(show, painter, model, base, bible_next, beats, photos, say):
         finish(calls[0], got, f"pose:{m['name']}:neutral")
         return m["name"], got
 
-    with ThreadPoolExecutor(max_workers=PARALLEL if painter.mode != "replay" else 1) as pool:
-        list(pool.map(neutral, members))
+    _each(neutral, members, PARALLEL if painter.mode != "replay" else 1)
 
     # neutral poses already on file are references too
     for m in members:
@@ -264,8 +272,7 @@ def _batch(show, painter, model, base, bible_next, beats, photos, say):
     def other(c):
         return c, run.draw(c, photos)
 
-    with ThreadPoolExecutor(max_workers=PARALLEL if painter.mode != "replay" else 1) as pool:
-        done = list(pool.map(other, rest))
+    done = _each(other, rest, PARALLEL if painter.mode != "replay" else 1)
 
     # 4. files and cutouts
     for name, (data, mime, key) in list(run.made.items()):
@@ -288,6 +295,30 @@ def _batch(show, painter, model, base, bible_next, beats, photos, say):
             entry.update(file=str(path.relative_to(show.dir)), key=key)
     sheet["members"] = [by_name[m["name"]] for m in members]
     return sheet, refused, run.paid
+
+
+def _each(fn, items, workers):
+    """fn over items in parallel. The first error stops the rest: calls not yet
+    started are never made (so a batch moving to another model, or out of
+    budget, pays for nothing more), then that error is raised."""
+    stop = threading.Event()
+
+    def guarded(x):
+        if stop.is_set():
+            return None
+        try:
+            return fn(x)
+        except BaseException:
+            stop.set()
+            raise
+
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = [pool.submit(guarded, x) for x in items]
+        errors = [f.exception() for f in futures]
+    first = next((e for e in errors if e is not None), None)
+    if first is not None:
+        raise first
+    return [f.result() for f in futures]
 
 
 def _neutral_call(sheet, by_name, members, m, look, title):

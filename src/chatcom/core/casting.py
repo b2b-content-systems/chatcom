@@ -13,6 +13,7 @@ prompt and inputs always give the same key, so a rerun never pays twice."""
 from __future__ import annotations
 
 import hashlib
+import re
 from dataclasses import dataclass, field
 
 POSES = ("neutral", "talking", "laughing", "typing", "facepalm", "shrug")
@@ -134,6 +135,15 @@ def plan(sheet: dict, members: list[dict], look: str, title: str | None,
             calls.append(Call("background", background_prompt(look, loc["description"]), background=loc["id"],
                               refs=["style"], aspect="9:16"))
     return calls
+
+
+def scrub(text: str, names: list[str]) -> str:
+    """Every prompt goes through this before it is sent: the cast's names and
+    nicknames (and their possessives) become "a friend". Longest first, whole words."""
+    for n in sorted({n.strip() for n in names if n and n.strip()}, key=len, reverse=True):
+        text = re.sub(rf"(?<!\w){re.escape(n)}('s|’s)?(?!\w)",
+                      lambda m: "a friend's" if m.group(1) else "a friend", text, flags=re.I)
+    return text
 
 
 def content_key(model: str, call: Call, ref_hashes: list[str]) -> str:

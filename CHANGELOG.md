@@ -12,6 +12,8 @@ Next Step 3, part 1: casting.
 - Consent and spend: the notice says what goes to Google; `--approve-calls N` must equal the planned count, and it is
   a hard cap on billed calls (a cut-off retry, a model switch or a refused photo cannot go past it). Calls that fail
   before billing are not counted. Every billed call goes to the run ledger, even when casting stops.
+- The cast's names and nicknames are removed from every image prompt in code. A timed-out image call counts as
+  billed. The first error in a batch stops the calls not yet started.
 - `gemini-nano-banana-2.1` by default, `gemini-3.1-flash-image` as the fallback; a show keeps one model. A model that is
   gone or keeps failing moves the whole batch; a quota stop keeps what was drawn; a refused photo casts that member from
   how they text.
