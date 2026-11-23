@@ -1,0 +1,116 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/b2b-content-systems/chatcom/schemas/beats.schema.json",
+  "title": "CHATCOM writer output (beats.json)",
+  "description": "What the writer returns for one episode: the words on screen and the bible update. The structure of the cut (segment order and lengths) is fixed by the segment budget, not by the writer. Rules the schema cannot express (ids that must exist, reading speed, word counts, no paths or links) are checked by the validator in chatcom.core.beats. A key starting with '_' is a comment.",
+  "type": "object",
+  "additionalProperties": false,
+  "patternProperties": { "^_": true },
+  "required": ["schema_version", "episode", "show_title", "title", "bottle", "cold_open", "credits", "scenes", "tv_guide", "synopsis", "bible_update"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "episode": { "type": "string", "pattern": "^S[0-9]{2}E[0-9]{2,3}$" },
+    "show_title": {
+      "type": ["string", "null"],
+      "maxLength": 40,
+      "description": "Required (a string) only when the show has no title yet; null otherwise."
+    },
+    "title": { "type": "string", "minLength": 1, "maxLength": 48, "description": "Episode title, for example 'Flights Went Up Again'." },
+    "bottle": { "type": "boolean", "description": "true for a bottle episode built from callbacks on a quiet week." },
+    "cold_open": { "$ref": "#/$defs/scene" },
+    "credits": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 8,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "role"],
+        "properties": {
+          "name": { "type": "string", "minLength": 1 },
+          "role": { "type": "string", "minLength": 1, "maxLength": 32 }
+        }
+      }
+    },
+    "scenes": { "type": "array", "minItems": 3, "maxItems": 3, "items": { "$ref": "#/$defs/scene" } },
+    "tv_guide": { "type": "string", "minLength": 1, "maxLength": 120, "description": "The listing line: 'The trip is off. Again. Dave has a spreadsheet.'" },
+    "synopsis": { "type": "string", "minLength": 1, "maxLength": 160, "description": "At most 18 words." },
+    "bible_update": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["cast", "jokes_new", "callbacks", "storylines_new", "storylines_update"],
+      "properties": {
+        "cast": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name"],
+            "properties": {
+              "name": { "type": "string", "minLength": 1 },
+              "role": { "type": "string", "minLength": 1, "maxLength": 32 },
+              "traits_add": { "type": "array", "items": { "type": "string", "minLength": 1, "maxLength": 80 }, "maxItems": 3 },
+              "texting_voice": { "type": "string", "minLength": 1, "maxLength": 160 }
+            }
+          }
+        },
+        "jokes_new": { "type": "array", "maxItems": 3, "items": { "type": "string", "minLength": 1, "maxLength": 160 } },
+        "callbacks": { "type": "array", "items": { "type": "string", "pattern": "^j[0-9]+$" }, "description": "ids of existing jokes this episode calls back to." },
+        "storylines_new": { "type": "array", "maxItems": 3, "items": { "type": "string", "minLength": 1, "maxLength": 200 } },
+        "storylines_update": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "status"],
+            "properties": {
+              "id": { "type": "string", "pattern": "^s[0-9]+$" },
+              "status": { "enum": ["open", "resolved"] },
+              "summary": { "type": "string", "minLength": 1, "maxLength": 200 }
+            }
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "scene": {
+      "type": "object",
+      "additionalProperties": false,
+      "patternProperties": { "^_": true },
+      "required": ["background", "bubbles"],
+      "properties": {
+        "background": { "type": "string", "pattern": "^[a-z0-9_]{1,32}$", "description": "An existing background id, or the id of a new_location." },
+        "new_location": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["id", "description"],
+          "properties": {
+            "id": { "type": "string", "pattern": "^[a-z0-9_]{1,32}$" },
+            "description": { "type": "string", "minLength": 1, "maxLength": 160 }
+          },
+          "description": "Only for a place the show has never been. Costs one image call; the episode cap applies."
+        },
+        "bubbles": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 6,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["speaker", "text", "pose", "sticker"],
+            "properties": {
+              "speaker": { "type": "string", "minLength": 1, "description": "A cast or chorus name." },
+              "text": { "type": "string", "minLength": 1 },
+              "pose": {
+                "enum": [null, "neutral", "talking", "laughing", "typing", "facepalm", "shrug"],
+                "description": "A pose id for a cast member; null for chorus."
+              },
+              "sticker": { "enum": [null, "laugh", "applause", "gasp", "aww", "groan"] }
+            }
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/b2b-content-systems/chatcom/schemas/setup.schema.json",
+  "title": "CHATCOM first-run setup (setup.json)",
+  "description": "Answers to the 'Season premiere' setup, for runs without a terminal (skill mode, scripts, CI). Every field matches a flag of `chatcom new`; a flag wins over the file. Photos are recorded here and used by casting (Next Step 3).",
+  "type": "object",
+  "additionalProperties": false,
+  "patternProperties": { "^_": true },
+  "required": ["operator_sender"],
+  "properties": {
+    "slug": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,47}$" },
+    "title": { "type": "string", "minLength": 1, "maxLength": 40, "description": "Omit to let the writer name the show in episode 1." },
+    "look": { "enum": ["sitcom", "anime", "cartoon80s", "truecrime", "cutscene", "facetime", "flipphone", "reality"] },
+    "operator_sender": { "type": "string", "minLength": 1, "description": "Your own name as it appears in the chat." },
+    "timezone": { "type": "string", "minLength": 1, "description": "IANA zone; default is this computer's zone." },
+    "cast": {
+      "type": "array",
+      "maxItems": 8,
+      "items": { "type": "string", "minLength": 1 },
+      "description": "Who to cast. Omit to cast the 8 most active senders in episode 1's window."
+    },
+    "photos": {
+      "type": "object",
+      "additionalProperties": { "type": "string", "minLength": 1 },
+      "description": "Member name to a reference photo path."
+    },
+    "exclude": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "description": "Members whose messages are removed before any model call; @mentions of them are replaced."
+    },
+    "no_photo": { "type": "array", "items": { "type": "string", "minLength": 1 }, "description": "Cast from texting behavior even if a photo is supplied." },
+    "no_cast": { "type": "array", "items": { "type": "string", "minLength": 1 }, "description": "Keep out of the cast (they stay in the chorus)." },
+    "aliases": {
+      "type": "object",
+      "additionalProperties": { "type": "array", "items": { "type": "string", "minLength": 1 }, "minItems": 1 },
+      "description": "Canonical name to the other display names (or phone numbers) the same person appears under."
+    }
+  }
+}

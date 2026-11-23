@@ -1,0 +1,54 @@
+{
+  "schema_version": 1,
+  "episode": "S01E01",
+  "show_title": "LAKE HOUSE, PROBABLY",
+  "title": "The Couch Situation",
+  "bottle": false,
+  "cold_open": {"background": "chat_set", "bubbles": [
+    {"speaker": "Mike", "text": "update: I can't do the 13th anymore", "pose": "talking", "sticker": null},
+    {"speaker": "Dave", "text": "MIKE", "pose": "facepalm", "sticker": "gasp"},
+    {"speaker": "Mike", "text": "jk", "pose": "neutral", "sticker": null},
+    {"speaker": "Mike", "text": "probably jk", "pose": "shrug", "sticker": "laugh"}]},
+  "credits": [
+    {"name": "Dave", "role": "The Commissioner"},
+    {"name": "Mike", "role": "Probably"},
+    {"name": "Theo", "role": "Keeper of the Spreadsheet"},
+    {"name": "Priya", "role": "Which March?"},
+    {"name": "Sam", "role": "Only Sends 'k'"}],
+  "scenes": [
+    {"background": "home_base", "bubbles": [
+      {"speaker": "Dave", "text": "made the playlist. 41 songs. all bangers", "pose": "talking", "sticker": null},
+      {"speaker": "Priya", "text": "it is 30 songs from one album", "pose": "neutral", "sticker": null},
+      {"speaker": "Dave", "text": "a very good album", "pose": "shrug", "sticker": "laugh"}]},
+    {"background": "lake_house", "new_location": {"id": "lake_house", "description": "A rented lake house living room with one sad couch"}, "bubbles": [
+      {"speaker": "Theo", "text": "room assignments are in. no trades", "pose": "typing", "sticker": null},
+      {"speaker": "Mike", "text": "why am I on the couch", "pose": "talking", "sticker": null},
+      {"speaker": "Theo", "text": "see excuses tab, row 4", "pose": "neutral", "sticker": "laugh"},
+      {"speaker": "Priya", "text": "my sister might come?", "pose": "talking", "sticker": null},
+      {"speaker": "Theo", "text": "she gets the couch. mike gets the floor", "pose": "neutral", "sticker": null},
+      {"speaker": "Mike", "text": "this is a hate crime against mike", "pose": "facepalm", "sticker": "laugh"}]},
+    {"background": "chat_set", "bubbles": [
+      {"speaker": "Dave", "text": "who is driving", "pose": "typing", "sticker": null},
+      {"speaker": "Sam", "text": "me", "pose": "talking", "sticker": "gasp"},
+      {"speaker": "Priya", "text": "sam said a word that wasn't k", "pose": "laughing", "sticker": null},
+      {"speaker": "Theo", "text": "historic", "pose": "neutral", "sticker": "applause"},
+      {"speaker": "Dave", "text": "8 weeks out. nobody cancel. I mean it", "pose": "talking", "sticker": null},
+      {"speaker": "Mike", "text": "probably won't", "pose": "shrug", "sticker": "laugh"}]}],
+  "tv_guide": "The lake house is 8 weeks out. Mike is probably coming. Sam spoke.",
+  "synopsis": "Theo assigned rooms, Mike got the floor, and Sam said a word that wasn't k.",
+  "bible_update": {
+    "cast": [
+      {"name": "Dave", "role": "The Commissioner", "traits_add": ["plans the trip and polices it"], "texting_voice": "Short commands, all caps when betrayed"},
+      {"name": "Mike", "role": "Probably", "traits_add": ["commits to nothing", "finds the fun thing before paying"], "texting_voice": "Hedges every answer with 'probably'"},
+      {"name": "Theo", "role": "Keeper of the Spreadsheet", "traits_add": ["runs the trip from a spreadsheet"], "texting_voice": "Deadpan, one line, cites the tab"},
+      {"name": "Priya", "role": "Which March?", "traits_add": ["asks the question everyone skipped"]},
+      {"name": "Sam", "role": "Only Sends 'k'", "traits_add": ["answers in one letter"], "texting_voice": "k"}],
+    "jokes_new": [
+      "Theo's spreadsheet has an excuses tab, and Mike keeps filling it",
+      "Mike's answer to everything is 'probably'",
+      "Sam only ever texts 'k'"],
+    "callbacks": [],
+    "storylines_new": ["Will the March 13 lake house trip actually happen", "Mike went from the couch to the floor"],
+    "storylines_update": []
+  }
+}

@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/b2b-content-systems/chatcom/schemas/message.schema.json",
+  "title": "CHATCOM normalized message",
+  "description": "One chat message after ingest. Every adapter (WhatsApp now; iMessage and Telegram later) writes this shape, one JSON object per line. System lines (joins, subject changes, the encryption notice) are not messages and never appear here.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "sender", "time", "text", "media", "deleted", "edited", "reply_to", "reactions", "source"],
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{16}$",
+      "description": "Content hash of (sender, UTC minute, ordinal within that sender-minute, normalized text). Stable across re-exports of the same chat, so overlapping exports de-duplicate."
+    },
+    "sender": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Display name after aliases. A sender shown only as a phone number is masked ('Unnamed 1') until the operator sets an alias."
+    },
+    "time": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 with the show's UTC offset at that moment. WhatsApp exports carry local time with no zone; the show's timezone resolves it, including the repeated hour at a DST fall-back."
+    },
+    "text": {
+      "type": "string",
+      "description": "Normalized text: NFC, invisible direction marks removed, the 'edited' marker removed. Empty for a media-only or deleted message."
+    },
+    "media": {
+      "enum": [null, "image", "video", "audio", "sticker", "gif", "document", "contact", "location", "poll", "other"],
+      "description": "Kind of attachment when the export replaced it with a placeholder. CHATCOM never reads media files."
+    },
+    "deleted": { "type": "boolean" },
+    "edited": { "type": "boolean" },
+    "reply_to": {
+      "type": ["string", "null"],
+      "description": "id of the message this one replies to. Always null for WhatsApp .txt exports (the format does not carry it)."
+    },
+    "reactions": {
+      "type": ["array", "null"],
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["sender", "emoji"],
+        "properties": { "sender": { "type": "string" }, "emoji": { "type": "string" } }
+      },
+      "description": "Always null for WhatsApp .txt exports."
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["adapter", "line"],
+      "properties": {
+        "adapter": { "enum": ["whatsapp", "imessage", "telegram", "synthetic"] },
+        "line": { "type": "integer", "minimum": 1, "description": "First line of the message in the export file." }
+      }
+    }
+  }
+}
