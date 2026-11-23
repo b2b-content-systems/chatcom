@@ -29,6 +29,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from chatcom.adapters.source import ParseResult
+from chatcom.core.clock import localize
 from chatcom.core.errors import ChatcomError
 from chatcom.core.masking import alias_map, canonical, is_phone, mask_numbers, phone_label  # noqa: F401 (re-exported)
 from chatcom.core.messages import message_hash, normalize_text, utc_minute
@@ -242,7 +243,7 @@ def parse(text: str, tz_name: str, *, aliases: dict[str, list[str]] | None = Non
     ordinals: Counter = Counter()
     prev_utc: datetime | None = None
     for line_no, naive, body in rows:
-        aware = _localize(naive, tz, prev_utc)
+        aware = localize(naive, tz, prev_utc)
         prev_utc = aware.astimezone(timezone.utc)
         sender, raw_text = _split(body)
         if sender is None:
@@ -342,18 +343,6 @@ def _naive(r: _Raw, order: str) -> datetime:
             raise ValueError("12-hour clock out of range")
         h = h % 12 + (12 if ampm == "p" else 0)
     return datetime(y, mo, d, h, mi, s)
-
-
-def _localize(naive: datetime, tz: ZoneInfo, prev_utc: datetime | None) -> datetime:
-    a0 = naive.replace(tzinfo=tz, fold=0)
-    a1 = naive.replace(tzinfo=tz, fold=1)
-    if a0.utcoffset() == a1.utcoffset() or prev_utc is None:
-        return a0
-    # The repeated hour of a DST fall-back: once time has passed the first
-    # pass through it, the export is in the second one.
-    if a0.astimezone(timezone.utc) < prev_utc:
-        return a1
-    return a0
 
 
 def _split(body: str) -> tuple[str | None, str]:

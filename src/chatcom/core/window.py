@@ -76,10 +76,21 @@ def apply_exclusions(messages: list[dict], exclude: list[str],
         quote = m.get("quote")
         if quote and (quote.get("sender") or "").casefold() in names:
             quote = None  # a quoted reply by an excluded person goes too
-        if text == m["text"] and quote is m.get("quote"):
+        elif quote:
+            qtext = quote["text"]
+            for p in pats:
+                qtext = p.sub("@[someone]", qtext)
+            if qtext != quote["text"]:
+                quote = {**quote, "text": qtext}
+        reactions = m.get("reactions")
+        if reactions and any((r.get("sender") or "").casefold() in names for r in reactions):
+            # an excluded person's reaction stays as a count, without the name
+            reactions = [{**r, "sender": None} if (r.get("sender") or "").casefold() in names else r
+                         for r in reactions]
+        if text == m["text"] and quote is m.get("quote") and reactions is m.get("reactions"):
             out.append(m)
         else:
-            out.append({**m, "text": text, "quote": quote})
+            out.append({**m, "text": text, "quote": quote, "reactions": reactions})
     return out, dropped
 
 

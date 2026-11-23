@@ -77,6 +77,12 @@ transcript only when its first line is `# source:` or `# speakers:` (docs/transc
 ## chatcom_e_thread_required
 The export holds more than one chat. Pass `--thread NAME` with one of the chats listed. Exit 2.
 
+## chatcom_e_transcript_invalid
+A transcript has a line chatcom cannot read as written: a header other than `# source: WORD` or
+`# speakers: A, B`, a speaker listed twice or not a valid name, or a date or time that does not exist
+(`--- 2026-02-30 ---`, `[25:00]`). The error names the line. Fix it as
+[transcript-format.md](transcript-format.md) shows. Exit 2.
+
 ## chatcom_e_export_outside_inbox
 In skill mode (`chatcom ingest` for the session writer, and `chatcom episode --dry-run` without a terminal) chatcom
 reads only the export given at `chatcom new` or files in the show's inbox (`~/.chatcom/<show>/inbox/`). Other
