@@ -517,3 +517,15 @@ def test_a_header_between_rows_blocks_the_midnight_roll():
     with pytest.raises(ChatcomError) as e:
         S.join([img("1", rows)], tz=NY, operator="Dave")
     assert "out of order" in e.value.what
+
+
+def test_strip_png_keeps_only_the_pixels(tmp_path):
+    f = tmp_path / "x.png"
+    data = png(4, 4, shot="2026:01:09 19:00:00")
+    # add a text chunk (a common place for device names) before IEND
+    data = data[:-12] + _chunk(b"tEXt", b"Software\x00iPhone 99") + data[-12:]
+    f.write_bytes(data)
+    assert b"eXIf" in f.read_bytes() and b"tEXt" in f.read_bytes()
+    I.strip_png(f)
+    out = f.read_bytes()
+    assert b"eXIf" not in out and b"tEXt" not in out and I.dimensions(out, "png") == (4, 4) and out.endswith(b"IEND\xaeB`\x82")
