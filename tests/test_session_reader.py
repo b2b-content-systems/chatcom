@@ -309,3 +309,32 @@ def test_a_link_inside_an_export_folder_is_refused(capsys, lake_show, tmp_path, 
     (d / "IMG_9999.PNG").symlink_to(outside)
     code, _, err = run(capsys, "--json", "ingest", "lake-house", "--export", str(d), "--accept-data-flow")
     assert code == 2 and json.loads(err)["code"] == "CHATCOM_E_IMAGE_UNREADABLE" and "link" in json.loads(err)["what"]
+
+
+
+def test_a_first_import_without_show_is_named_after_the_chat(capsys, chatcom_home, tmp_path, not_a_tty):
+    d = shots(tmp_path / "shots")
+    out = json.loads(run(capsys, "--json", "new", str(d), "--operator", "Dave", "--tz", TZ, "--writer", "session",
+                         "--accept-data-flow")[1])
+    b = json.loads(Path(json.loads(run(capsys, "--json", "read-prep", "--import", out["import"])[1])["bundle"])
+                   .read_text("utf-8"))
+    reads = {f"{i + 1:03d}.png": READS[f"IMG_{i + 1:04d}.PNG"] for i in range(3)}
+    done = json.loads(run(capsys, "--json", "read-submit", "--import", out["import"], "--file",
+                          str(reader_json(tmp_path, [Path(p).name for p in b["images"]], reads)), "--model", "m")[1])
+    code, made, err = run(capsys, "--json", *done["next_command"].split()[1:])
+    assert code == 0, err
+    assert json.loads(made)["slug"] == "lake-house-boys"
+
+
+def test_a_rejoin_never_overwrites_an_edited_transcript(capsys, lake_show, tmp_path, not_a_tty):
+    _weekly(capsys, lake_show, tmp_path)
+    b = _prep(capsys)
+    reads = {f"{i + 1:03d}.png": READS[f"IMG_{i + 1:04d}.PNG"] for i in range(3)}
+    rj = reader_json(tmp_path, [Path(p).name for p in b["images"]], reads)
+    res = json.loads(run(capsys, "--json", "read-submit", "lake-house", "--file", str(rj), "--model", "m",
+                         "--review")[1])
+    tp = Path(res["transcript"])
+    tp.write_text(tp.read_text("utf-8").replace("not me", "NOT ME (fixed by hand)"), "utf-8")
+    code, _, err = run(capsys, "--json", "read-submit", "lake-house", "--file", str(rj), "--model", "m")
+    assert code == 2 and "edited" in json.loads(err)["what"]
+    assert "fixed by hand" in tp.read_text("utf-8")

@@ -216,6 +216,10 @@ def _new_show(exports, setup, tz, max_unparsed, log, key, source, thread, shot_c
                                  None, key=key, source=source, thread=thread, shots=shot_ctx)
     if res.adapter == "screenshots":
         check_screenshot_exclusions(setup, res)  # an excluded person never joins the cast as "Speaker A"
+    pending = _pending_dir(exports)
+    if pending is not None:  # a skill-mode import's transcript: name the show after the chat the session read
+        joined = store.read_json(pending / "join.json") if (pending / "join.json").exists() else {}
+        display = joined.get("chat_name") or "Screenshots"
     slug = setup.get("slug") or store.slugify(display)
     show = store.Show(slug)
     if show.exists():
@@ -247,7 +251,6 @@ def _new_show(exports, setup, tz, max_unparsed, log, key, source, thread, shot_c
         dest = show.dir / "imports" / log.run_id
         dest.parent.mkdir(parents=True, exist_ok=True)
         Path(shot_ctx["workdir"]).rename(dest)
-    pending = _pending_dir(exports)
     if pending is not None:  # a skill-mode import's transcript: its copies and reads move in too
         dest = show.dir / "imports" / pending.name
         dest.parent.mkdir(parents=True, exist_ok=True)

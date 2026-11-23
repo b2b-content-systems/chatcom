@@ -57,6 +57,11 @@ class Target:
         store.write_json(self.state_path, {**st, "updated": store.now()})
 
 
+def _sha(p: Path) -> str:
+    import hashlib
+    return hashlib.sha256(p.read_bytes()).hexdigest()
+
+
 def brief() -> str:
     return resources.files("chatcom").joinpath("prompts", "reader.md").read_text("utf-8")
 
@@ -151,7 +156,13 @@ def submit(t: Target, doc, *, model: str, opts: dict, draft: Path | None = None)
     if st.get("stage") == "read" and st.get("reader") and len(st["reader"]["done"]) == len(st["reader"]["copies"]):
         # every image is read: a repeat joins again from the kept reads, with this call's --speaker,
         # --reverse or --anchor-date (the fix chatcom names when a speaker is unmapped)
+        on_disk = t.dir / "transcript.txt"
+        if on_disk.exists() and st.get("transcript_sha") and _sha(on_disk) != st["transcript_sha"]:
+            raise ChatcomError("CHATCOM_E_USAGE", "transcript.txt was edited after the join; joining again would "
+                               "lose those edits", f"Import the edited file instead: --export {on_disk}. Or move it "
+                               "away to join again from the reads.", context={"transcript": str(on_disk)})
         path = join(t, st["reader"], opts)
+        st["transcript_sha"] = _sha(path)
         st["transcript"] = str(path)
         t.save(st)
         return {"done": True, "read": len(st["reader"]["done"]), "images": len(st["reader"]["copies"]),
@@ -201,7 +212,7 @@ def submit(t: Target, doc, *, model: str, opts: dict, draft: Path | None = None)
         return {"done": False, "read": len(rs["done"]), "images": len(rs["copies"]),
                 "next_command": f"chatcom read-prep {t.arg}"}
     path = join(t, rs, opts)
-    st.update({"stage": "read", "transcript": str(path)})
+    st.update({"stage": "read", "transcript": str(path), "transcript_sha": _sha(path)})
     t.save(st)
     return {"done": True, "read": len(rs["done"]), "images": len(rs["copies"]), "transcript": str(path)}
 
