@@ -442,7 +442,7 @@ def test_the_licence_check_catches_an_unlisted_or_changed_asset(tmp_path):
 def _fake_tools(tmp_path, monkeypatch, node="v22.11.0", npm_exit=1) -> Path:
     bin_ = tmp_path / "bin"
     bin_.mkdir()
-    for tool, body in (("node", f'echo "{node}"'), ("npm", f'echo "npm broke"; exit {npm_exit}')):
+    for tool, body in (("node", f'echo "{node}"'), ("npm", f'echo "npm broke userconfig=$npm_config_userconfig token=${{NPM_TOKEN:-none}}"; exit {npm_exit}')):
         f = bin_ / tool
         f.write_text(f"#!/bin/sh\n{body}\n")
         f.chmod(f.stat().st_mode | stat.S_IEXEC)
@@ -452,6 +452,7 @@ def _fake_tools(tmp_path, monkeypatch, node="v22.11.0", npm_exit=1) -> Path:
 
 def test_a_failed_install_is_not_marked_installed(tmp_path, monkeypatch):
     _fake_tools(tmp_path, monkeypatch)
+    monkeypatch.setenv("NPM_TOKEN", "x")  # a user ~/.npmrc may refer to it; npm must not read that file
     rt_dir = runtime.root()
     rt_dir.mkdir(parents=True)
     (rt_dir / "installed.json").write_text("{}")  # a stale marker from an earlier install
@@ -461,6 +462,12 @@ def test_a_failed_install_is_not_marked_installed(tmp_path, monkeypatch):
     assert e.value.side_effects == "partial" and runtime.INSTALL_COMMAND in e.value.fix
     assert not (rt_dir / "installed.json").exists() and "npm broke" in (rt_dir / "install.log").read_text()
     assert (rt_dir / "package-lock.json").is_file()
+    # Value: protects=npm ci runs with no user ~/.npmrc and no token, so a user config that refers to a stripped
+    # token cannot abort the install; fails_when=npm_config_userconfig goes; why_new=review pass 2 (red-team#4);
+    # seam=none (fake npm on PATH); no_claim=real npm's config parsing
+    log = (rt_dir / "install.log").read_text()
+    assert "token=none" in log and f"userconfig={rt_dir / '.npmrc-empty'}" in log
+    assert (rt_dir / ".npmrc-empty").read_text() == ""
 
 
 def test_an_old_node_is_refused_with_the_fix(tmp_path, monkeypatch):
@@ -510,6 +517,12 @@ def test_a_failed_rerender_goes_back_to_cast_and_says_so(cast_show, monkeypatch,
     assert app.status(cast_show)["next"] == "chatcom render lake-house"
     assert app.render(cast_show, runner=fake_runner)["stage"] == "rendered"  # and it renders again
 
+    def interrupted(project, master, *, expected, log):  # Ctrl-C during a re-render (review pass 2)
+        raise KeyboardInterrupt
+    with pytest.raises(KeyboardInterrupt):
+        app.render(cast_show, runner=interrupted)
+    assert store.read_json(cast_show.state_path("S01E01"))["stage"] == "cast"
+
 
 # Value: protects=no provider key or token reaches npm's install scripts or HyperFrames; fails_when=env() goes back
 # to copying os.environ; why_new=review found the keys passed through; seam=none; no_claim=what a child does with
@@ -523,29 +536,74 @@ def test_the_render_children_get_no_keys_or_tokens(monkeypatch):
     assert env["PATH"] and env["HYPERFRAMES_NO_TELEMETRY"] == "1"
 
 
-# Value: protects=a render that hangs past the limit ends with its whole process group, so no Chrome is left
-# running; fails_when=only the node child is killed; why_new=review found orphaned Chrome on timeout;
-# seam=HyperFrames (a fake that starts a child and hangs); no_claim=puppeteer's own cleanup
-def test_a_hung_render_is_stopped_with_everything_it_started(tmp_path, monkeypatch):
-    monkeypatch.setattr(hyperframes, "RENDER_SECONDS", 1)
-    monkeypatch.setattr(hyperframes, "STOP_GRACE", 2)
-    monkeypatch.setattr(tools, "ffprobe", lambda why="": "/bin/true")
-    pidfile = tmp_path / "child.pid"
-    exe = tmp_path / "hyperframes"
-    exe.write_text(f'#!/bin/sh\nsleep 120 &\necho $! > "{pidfile}"\nwait\n')
+# Value: protects=a render that hangs past the limit, or is interrupted, is stopped: TERM first so HyperFrames can
+# close its Chrome, KILL if it ignores TERM; fails_when=the timeout or interrupt path stops nothing, or skips TERM;
+# why_new=review passes 1-2 (orphaned Chrome, Ctrl-C); seam=HyperFrames (a fake that starts a child and hangs);
+# no_claim=puppeteer's own Chrome cleanup
+def _hanging(tmp_path, honour_term: bool) -> tuple[Path, Path]:
+    pids = tmp_path / "pids"
+    exe = tmp_path / ("hf-term" if honour_term else "hf-stubborn")
+    trap = "trap 'kill $CHILD; exit 143' TERM" if honour_term else "trap '' TERM"
+    exe.write_text(f'#!/bin/sh\n{trap}\nsleep 120 &\nCHILD=$!\necho "$$ $CHILD" > "{pids}"\n'
+                   'while :; do sleep 1; done\n')
     exe.chmod(exe.stat().st_mode | stat.S_IEXEC)
+    return exe, pids
+
+
+def _gone(pid: int) -> bool:
+    import time
+    for _ in range(30):
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return True
+        try:  # reap it if it is our own zombie
+            os.waitpid(pid, os.WNOHANG)
+        except ChildProcessError:
+            pass
+        time.sleep(0.1)
+    return False
+
+
+@pytest.mark.parametrize("honour_term", [True, False])
+def test_a_hung_render_is_stopped(tmp_path, monkeypatch, honour_term):
+    monkeypatch.setattr(hyperframes, "RENDER_SECONDS", 1)
+    monkeypatch.setattr(hyperframes, "STOP_GRACE", 1)
+    monkeypatch.setattr(tools, "ffprobe", lambda why="": "/bin/true")
+    exe, pids = _hanging(tmp_path, honour_term)
     project = tmp_path / "render"
     project.mkdir()
     with pytest.raises(ChatcomError) as e:
         hyperframes.render(project, project / "master.mp4", expected=60.0, log=project / "render.log", binary=exe)
     assert e.value.code == "CHATCOM_E_RENDER" and "was stopped" in e.value.what
-    child = int(pidfile.read_text())
-    import time
-    for _ in range(20):  # the group was signalled; give the kernel a moment to reap it
-        try:
-            os.kill(child, 0)
-        except ProcessLookupError:
-            break
-        time.sleep(0.1)
+    shell, child = (int(x) for x in pids.read_text().split())
+    assert _gone(shell)  # TERM, or KILL after the grace period
+    if honour_term:
+        assert _gone(child)  # the renderer closed what it started (as puppeteer closes Chrome)
     else:
-        pytest.fail(f"the render's child process {child} is still running")
+        os.kill(child, 9)  # a stubborn renderer's own child: clean up the test's leftover
+
+
+def test_an_interrupted_render_is_stopped(tmp_path, monkeypatch):
+    monkeypatch.setattr(hyperframes, "STOP_GRACE", 1)
+    monkeypatch.setattr(tools, "ffprobe", lambda why="": "/bin/true")
+    exe, pids = _hanging(tmp_path, True)
+    project = tmp_path / "render"
+    project.mkdir()
+    real_wait, calls = subprocess.Popen.wait, []
+
+    def interrupted(self, timeout=None):
+        calls.append(timeout)
+        if len(calls) == 1:
+            import time
+            for _ in range(50):  # let the fake start its child first
+                if pids.exists() and pids.read_text().strip():
+                    break
+                time.sleep(0.05)
+            raise KeyboardInterrupt
+        return real_wait(self, timeout=timeout)
+    monkeypatch.setattr(subprocess.Popen, "wait", interrupted)
+    with pytest.raises(KeyboardInterrupt):
+        hyperframes.render(project, project / "master.mp4", expected=60.0, log=project / "render.log", binary=exe)
+    shell, child = (int(x) for x in pids.read_text().split())
+    assert _gone(shell) and _gone(child) and not (project / "master.part.mp4").exists()

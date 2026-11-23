@@ -8,8 +8,6 @@ path; no master.mp4 is left behind, so a rerun starts the render again."""
 from __future__ import annotations
 
 import json
-import os
-import signal
 import subprocess
 from pathlib import Path
 
@@ -18,7 +16,7 @@ from chatcom.core.errors import ChatcomError
 
 TOLERANCE = 0.1         # seconds
 RENDER_SECONDS = 1800   # a stuck Chrome ends here
-STOP_GRACE = 10         # seconds between TERM and KILL for the render's process group
+STOP_GRACE = 10         # seconds between TERM (HyperFrames closes its Chrome) and KILL
 
 
 def duration(path: Path) -> float:
@@ -37,20 +35,17 @@ def _failed(what: str, log: Path, **context) -> ChatcomError:
                         context={"log": str(log), **context}, trace_path=str(log))
 
 
-def _stop_group(p: subprocess.Popen) -> None:
-    """End the child's process group: TERM first so Chrome can close, then KILL."""
-    for sig, grace in ((signal.SIGTERM, STOP_GRACE), (signal.SIGKILL, STOP_GRACE)):
-        try:
-            os.killpg(p.pid, sig)
-        except ProcessLookupError:
-            return
-        try:
-            p.wait(timeout=grace)
-            os.killpg(p.pid, 0)  # node is gone; is anything left in its group?
-        except subprocess.TimeoutExpired:
-            continue
-        except ProcessLookupError:
-            return
+def _stop(p: subprocess.Popen) -> None:
+    """End a render: TERM first, so HyperFrames (puppeteer) closes the Chrome it
+    started, then KILL after the grace period."""
+    if p.poll() is not None:
+        return
+    p.terminate()
+    try:
+        p.wait(timeout=STOP_GRACE)
+    except subprocess.TimeoutExpired:
+        p.kill()
+        p.wait()
 
 
 def render(project: Path, master: Path, *, expected: float, log: Path, binary: Path | None = None) -> float:
@@ -65,16 +60,20 @@ def render(project: Path, master: Path, *, expected: float, log: Path, binary: P
     with log.open("w", encoding="utf-8") as fh:
         fh.write("$ " + " ".join(cmd) + "\n")
         fh.flush()
-        # its own session: on a timeout the whole group goes, Chrome included (puppeteer
-        # starts Chrome detached, and a SIGKILL to node alone would orphan it)
+        # Same process group as chatcom: Ctrl-C and a closed terminal reach HyperFrames
+        # too, and its own handlers close Chrome. A timeout or an interrupt here stops it.
         p = subprocess.Popen(cmd, cwd=project, env=runtime.env(), stdout=fh, stderr=subprocess.STDOUT,
-                             stdin=subprocess.DEVNULL, start_new_session=True)
+                             stdin=subprocess.DEVNULL)
         try:
             code = p.wait(timeout=RENDER_SECONDS)
         except subprocess.TimeoutExpired:
-            _stop_group(p)
+            _stop(p)
             part.unlink(missing_ok=True)
             raise _failed(f"the render took longer than {RENDER_SECONDS / 60:g} minutes and was stopped", log) from None
+        except BaseException:
+            _stop(p)
+            part.unlink(missing_ok=True)
+            raise
     if code != 0 or not part.is_file():
         part.unlink(missing_ok=True)
         raise _failed(f"the render failed (HyperFrames exit {code})", log, exit=code)

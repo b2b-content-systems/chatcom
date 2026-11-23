@@ -684,11 +684,12 @@ def render(show: store.Show, *, runner=None, say=lambda s: None) -> dict:
             index = composer.write_project(tl, sheet, show.dir, build, big_fonts=runtime.fonts_dir())
             say(f"{code}: rendering {tl.total:.0f} s with HyperFrames {runtime.VERSION}")
             seconds = run(index.parent, master, expected=tl.total, log=build / "render.log")
-        except ChatcomError as e:
+        except BaseException as e:  # a coded error, an OS error or Ctrl-C
             if st["stage"] == "rendered":  # the old master is gone: the episode is back to `cast`
                 store.write_json(show.state_path(code), {**st, "stage": "cast", "updated": store.now()})
-                e.side_effects = "partial"
-                e.fix += f" The earlier render was removed; {code} is back at stage 'cast'."
+                if isinstance(e, ChatcomError):
+                    e.side_effects = "partial"
+                    e.fix += f" The earlier render was removed; {code} is back at stage 'cast'."
             raise
         if st["stage"] == "cast":
             st = state_ops.advance(st, "rendered", store.now())

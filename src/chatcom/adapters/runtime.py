@@ -147,10 +147,15 @@ def fetch_font(name: str, dest: Path, opener=_open) -> None:
 
 
 def _run(cmd: list[str], cwd: Path, what: str, log: Path) -> None:
+    # npm reads no user ~/.npmrc: the lockfile pins every URL and hash, and a user config
+    # that refers to a token stripped from env() (`${NPM_TOKEN}`) would abort npm
+    empty_rc = cwd / ".npmrc-empty"
+    empty_rc.write_text("", "utf-8")
+    child = {**env(), "npm_config_userconfig": str(empty_rc)}
     with log.open("a", encoding="utf-8") as fh:
         fh.write(f"$ {' '.join(cmd)}\n")
         fh.flush()
-        r = subprocess.run(cmd, cwd=cwd, env=env(), stdout=fh, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL)
+        r = subprocess.run(cmd, cwd=cwd, env=child, stdout=fh, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL)
     if r.returncode != 0:
         raise ChatcomError("CHATCOM_E_PREFLIGHT", f"{what} failed (exit {r.returncode})",
                            f"Read {log}, fix the cause (often the network or disk space), then run "
