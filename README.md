@@ -44,6 +44,8 @@ Then drop in your export and ask: `make our group chat a show: tulum.zip`.
 
 > **Status: v0.1 is in development.** The commands above are the release path; watch this repo to get it the day it ships. The sample episodes on the site were made with the same pipeline.
 
+**Build progress (v0.1):** the open schemas, the WhatsApp parser (iOS and Android, 8 locale formats, tested), the episode window and the writer (Claude Code session, or Claude with a Gemini fallback) are in the repo. Casting and the video render are next. Today `chatcom episode` stops after the writer with the episode's `beats.json`.
+
 Planned commands for the CLI (`pipx install chatcom`):
 
 ```
