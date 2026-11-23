@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.1.0.dev4 (2026-11-23)
+
+Any group chat, PR 4 of 7: screenshot post-processing and the replay reader.
+
+### Added
+- Screenshot intake (`docs/screenshots.md`): a manifest in capture order (EXIF time, else the file time); each
+  image checked by its first bytes and header size before anything decodes it; clean copies re-encoded by ffmpeg
+  (forced demuxer, file protocol only, no metadata); HEIC through macOS `sips`; tall images split into
+  overlapping tiles.
+- The reader port, a read cache per (copy, model, prompt version), the read schema
+  (`schemas/read.schema.json`) and the ReplayReader (`--replay-reads`) for CI and the demo.
+- Fixed join rules (`core/screens.py`): newest-first detection, seam duplicates dropped (a whole copy replaces
+  a cut-off one), names carried across seams, `Speaker A` labels, day headers resolved against capture dates.
+  The result is a `# source: screenshots` transcript, read by the transcript parser.
+- `new` takes `--accept-data-flow` and `--writer` (screenshots are read only after consent);
+  `--speaker`, `--reverse`/`--no-reverse`, `--anchor-date`, `--review`, `--replace`, `--max-images`.
+- Stages `copied` and `read`; `CHATCOM_E_IMPORT_IN_PROGRESS`, `CHATCOM_E_IMAGE_UNREADABLE`,
+  `CHATCOM_E_TOO_MANY_IMAGES`, `CHATCOM_E_SPEAKER_UNMAPPED`.
+- A dry run lists screenshots in reading order and never reads them.
+- A property test drives random command sequences through the stage table.
+
+### Not yet
+- Reading screenshots in skill mode (PR 5) and with Gemini in CLI mode (PR 6): both refuse before any notice.
+
 ## 0.1.0.dev3 (2026-11-23)
 
 Any group chat, PR 3 of 7: Telegram.
