@@ -383,3 +383,53 @@ def test_the_joined_fixture_drops_every_seam_duplicate(capsys, chatcom_home, tmp
     body = [ln for ln in t.splitlines() if not ln.startswith(("#", ">"))]
     assert len(body) == len(set(body)) == 11, t
     assert "Priya: I can bring the cooler" in t
+
+
+# ---- PR 4 review fixes ----------------------------------------------------------------------------
+# Value: protects=a finished episode is never reset by a screenshot import; the notice tells the truth about
+# exclusion; a failed `new` leaves no copies; tiles count against the limit; fails_when=any guard is removed;
+# why_new=PR 4 review; seam=ReplayReader/ReplayWriter; no_claim=HEIC (needs macOS sips)
+
+@needs_ffmpeg
+def test_review_refuses_an_episode_past_ingested(capsys, chatcom_home, tmp_path, not_a_tty, beats_s01e01):
+    shots = _shots(tmp_path)
+    reads = str(FIX / "lake-reads.json")
+    assert run(capsys, "new", str(shots), "--show", "lake-house", "--operator", "Dave", "--tz", TZ,
+               "--cast", "Dave", "--cast", "Mike", "--cast", "Theo", "--cast", "Priya", "--cast", "Sam",
+               "--writer", "replay", "--replay-reads", reads, "--accept-data-flow")[0] == 0
+    replay = tmp_path / "beats.json"
+    replay.write_text(json.dumps(beats_s01e01), "utf-8")
+    base = ["episode", "lake-house", "--export", str(shots), "--writer", "replay", "--replay", str(replay),
+            "--replay-reads", reads]
+    assert run(capsys, *base)[0] == 0
+    sp = chatcom_home / "lake-house" / "episodes" / "S01E01" / "state.json"
+    before = sp.read_text("utf-8")
+    code, _, err = run(capsys, "--json", *base, "--review")
+    assert code == 2 and json.loads(err)["code"] == "CHATCOM_E_STATE"
+    assert sp.read_text("utf-8") == before
+
+
+def test_the_screenshot_notice_does_not_claim_exclusion_before_reading():
+    from chatcom import app
+    t = app.notice("anthropic", ["Sam"], images=True)
+    assert "before any model call" not in t and "Removed after reading, before the writer: Sam" in t
+    assert "Excluded before any model call: Sam" in app.notice("anthropic", ["Sam"])
+
+
+@needs_ffmpeg
+def test_a_failed_new_leaves_no_copies(capsys, chatcom_home, tmp_path, not_a_tty):
+    shots = _shots(tmp_path)
+    code, _, err = run(capsys, "new", str(shots), "--show", "lake-shots", "--operator", "Dave", "--exclude", "Ghost",
+                       "--tz", TZ, "--writer", "replay", "--replay-reads", str(FIX / "lake-reads.json"),
+                       "--accept-data-flow")
+    assert code == 2 and "CHATCOM_E_UNKNOWN_MEMBER" in err  # fails after the screenshots were read
+    assert (chatcom_home / "cache").exists()  # they were read
+    assert not any((chatcom_home / "imports").glob("*"))
+
+
+@needs_ffmpeg
+def test_tiles_count_against_the_limit(tmp_path):
+    (tmp_path / "a.png").write_bytes(png(10, 100))
+    with pytest.raises(ChatcomError) as e:
+        I.copy_all(I.manifest([tmp_path]), tmp_path / "out", max_images=2)
+    assert e.value.code == "CHATCOM_E_TOO_MANY_IMAGES"

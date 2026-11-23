@@ -46,7 +46,10 @@ SHOT_NOTICE = {
 
 def notice(mode: str, exclude: list[str], images: bool = False) -> str:
     text = (SHOT_NOTICE if images else NOTICE)[mode]
-    if exclude:
+    if exclude and images:
+        # the reader sees everyone in the screenshots; exclusion applies after it
+        text += f" Removed after reading, before the writer: {', '.join(exclude)}."
+    elif exclude:
         text += f" Excluded before any model call: {', '.join(exclude)}."
     return text
 
@@ -169,7 +172,22 @@ def new_show(export, setup: dict, *, tz: str, max_unparsed: float = MAX_UNPARSED
             raise ChatcomError("CHATCOM_E_AWAITING_CONFIRMATION", text,
                                "Ask the operator. If they agree, run the same command with --accept-data-flow.",
                                recovery="ask", context={"mode": writer, "notice": text})
+        if setup.get("slug") and store.Show(setup["slug"]).exists():  # refuse before reading anything
+            raise ChatcomError("CHATCOM_E_SHOW_EXISTS", f"a show '{setup['slug']}' already exists",
+                               f"Make this week's episode with `chatcom episode {setup['slug']} --export <file>`, "
+                               "or pass --show NEWSLUG.")
         shot_ctx = shot_context(shots, writer, setup["operator_sender"], store.home() / "imports" / log.run_id)
+    try:
+        return _new_show(exports, setup, tz, max_unparsed, log, key, source, thread, shot_ctx)
+    except BaseException:
+        # screenshot copies and their transcript never stay outside a show
+        if shot_ctx is not None and Path(shot_ctx["workdir"]).exists():
+            import shutil
+            shutil.rmtree(shot_ctx["workdir"], ignore_errors=True)
+        raise
+
+
+def _new_show(exports, setup, tz, max_unparsed, log, key, source, thread, shot_ctx):
     res, display = _parse_export(exports, setup.get("timezone", tz), setup.get("aliases", {}), max_unparsed, log,
                                  None, key=key, source=source, thread=thread, shots=shot_ctx)
     slug = setup.get("slug") or store.slugify(display)
@@ -303,6 +321,12 @@ def ingest(show: store.Show, export, *, accepted: bool, mode: str, since: dateti
         code = bible_ops.current_code(bible)
         sp = show.state_path(code)
         prior = store.read_json(sp) if sp.exists() else None
+        if prior and prior["stage"] not in ("ingested", *state_ops.IMPORTING):
+            # checked before anything is read: a drafted episode is never reset
+            raise ChatcomError("CHATCOM_E_STATE", f"{code} is already {prior['stage']}",
+                               f"Restart the episode with `chatcom rewrite {show.slug} --episode {code}` "
+                               "(arrives with the render step), or delete its folder.",
+                               context={"stage": prior["stage"], "folder": str(show.episode_dir(code))})
         if prior and prior["stage"] in state_ops.IMPORTING and not replace:
             # Only the transcript this import wrote may continue it.
             want = prior.get("transcript")
@@ -328,13 +352,6 @@ def ingest(show: store.Show, export, *, accepted: bool, mode: str, since: dateti
                                 until=_aware(until, tz), max_days=max_days, bottle=bottle,
                                 exclude=setup.get("exclude", []), aliases=setup.get("aliases"),
                                 key=key, adapter=res.adapter)
-        if sp.exists():
-            st = store.read_json(sp)
-            if st["stage"] not in ("ingested", *state_ops.IMPORTING):
-                raise ChatcomError("CHATCOM_E_STATE", f"{code} is already {st['stage']}",
-                                   f"Restart the episode with `chatcom rewrite {show.slug} --episode {code}` "
-                                   "(arrives with the render step), or delete its folder.",
-                                   context={"stage": st["stage"], "folder": str(show.episode_dir(code))})
         # A re-ingest before the draft is accepted starts the episode over, with
         # fresh writer attempts: this is the "rerun the skill" recovery.
         st = state_ops.new(code, win.log_entry(), mode, store.now(),

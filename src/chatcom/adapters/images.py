@@ -283,6 +283,8 @@ def copy_all(entries: list[Entry], dest: Path, max_images: int = MAX_IMAGES) -> 
             if kind == "heic":
                 src, kind = _heic_to_png(e.path, tmp), "png"
                 w, h = dimensions(src.read_bytes()[:32], "png") or (None, None)
+                if w and h and w * h > MAX_PIXELS:  # HEIC has no size in its header: check after conversion
+                    raise _unreadable(e.name, f"{w}x{h} pixels, over the {MAX_PIXELS} pixel limit")
             if not w or not h:
                 raise _unreadable(e.name, "the size cannot be read from the header")
             parts = tiles(w, h)
