@@ -111,5 +111,7 @@ def next_command(state: dict | None, slug: str) -> str:
             return f"chatcom write-prep {slug}"
         return f"chatcom episode {slug} --export <file> --writer {state.get('writer_mode', 'anthropic')}"
     if stage == "drafted":
-        return "casting and render arrive in Next Steps 3-4; the draft is in beats.json"
+        return f"chatcom cast {slug}"
+    if stage == "cast":
+        return "render arrives with Next Step 4; the cast is in cast.next.json"
     return f"chatcom status {slug}"

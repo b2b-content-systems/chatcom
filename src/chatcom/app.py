@@ -708,6 +708,7 @@ def setup_template() -> dict:
         "no_photo": ["Sam"],
         "no_cast": [],
         "aliases": {"Mike": ["Michael R", "+1 (555) 010-2233"]},
+        "looks": {"Mike": "beard, tall, glasses"},
     }
 
 
