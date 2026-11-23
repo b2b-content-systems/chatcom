@@ -68,6 +68,7 @@ class Call:
     background: str | None = None
     refs: list[str] = field(default_factory=list)  # names of earlier images or "photo:<name>", resolved by the caller
     aspect: str = "3:4"
+    take: int = 0              # bumped by `chatcom recast`, so a redraw never comes back from the cache
 
 
 def style_prompt(look: str, title: str | None) -> str:
@@ -122,7 +123,7 @@ def plan(sheet: dict, members: list[dict], look: str, title: str | None,
     to the operator's appearance note."""
     calls: list[Call] = []
     if not sheet.get("style_sheet"):
-        calls.append(Call("style", style_prompt(look, title), aspect="16:9"))
+        calls.append(Call("style", style_prompt(look, title), aspect="16:9", take=sheet.get("take", 0)))
     by_name = {m["name"]: m for m in sheet["members"]}
     for index, m in enumerate(members):
         entry = by_name.get(m["name"], {"poses": {}, "source": m["source"], "photo": None})
@@ -137,7 +138,7 @@ def plan(sheet: dict, members: list[dict], look: str, title: str | None,
             note = (looks or {}).get(m["name"])
             calls.append(Call("pose", pose_prompt(look, m, pose, from_photo=from_photo, first=first, index=index,
                                                   note=note),
-                              member=m["name"], pose=pose, refs=refs))
+                              member=m["name"], pose=pose, refs=refs, take=entry.get("take", 0) if first else 0))
     for b in sheet["backgrounds"]:
         if not b.get("file"):
             calls.append(Call("background", background_prompt(look, b["description"]), background=b["id"],
@@ -159,9 +160,11 @@ def scrub(text: str, names: list[str]) -> str:
 
 
 def content_key(model: str, call: Call, ref_hashes: list[str]) -> str:
-    """sha256 of everything that decides the picture."""
+    """sha256 of everything that decides the picture. A take of 0 adds nothing, so
+    keys made before recast existed stay the same."""
     h = hashlib.sha256()
-    for part in (model, call.kind, call.prompt, call.aspect, call.pose or "", *ref_hashes):
+    for part in (model, call.kind, call.prompt, call.aspect, call.pose or "", *ref_hashes,
+                 *([f"take:{call.take}"] if call.take else [])):
         h.update(part.encode("utf-8"))
         h.update(b"\x1f")
     return h.hexdigest()

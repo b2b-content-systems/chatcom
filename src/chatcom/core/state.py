@@ -4,8 +4,9 @@ the bible and cast sheet change only at `committed`.
     ingested -> drafted -> cast -> rendered -> encoded -> committed
 
 Screenshot imports add `copied -> read` before `ingested` (docs/design/any-group-chat.md).
-This release stops at `drafted` (beats.json and bible.next.json are written,
-the bible is not). Casting, render and encode arrive in Next Steps 3-4.
+This release stops at `cast` (beats.json, bible.next.json and cast.next.json
+are written; the bible and cast sheet are not). Render and encode arrive in
+Next Step 4. `chatcom recast` moves `cast` back to `drafted`.
 
 Attempts: 3 submits per prep call, at most 3 prep cycles per episode. The
 data flow the operator accepted is recorded; a command with another flow
@@ -54,6 +55,15 @@ def advance(state: dict, stage: str, now: str) -> dict:
         raise ChatcomError("CHATCOM_E_STATE", f"cannot go from '{state['stage']}' to '{stage}'",
                            "Run the steps in order.", context={"stage": state["stage"]})
     return {**state, "stage": stage, "updated": now}
+
+
+def reopen_cast(state: dict, now: str) -> dict:
+    """`chatcom recast`: the episode goes back to `drafted` until it is cast again."""
+    if state["stage"] not in ("drafted", "cast"):
+        raise ChatcomError("CHATCOM_E_STATE", f"{state['episode']} is at stage '{state['stage']}'; recast works "
+                           "after the draft and before the render", "Recast with the next episode's draft.",
+                           context={"stage": state["stage"]})
+    return {**state, "stage": "drafted", "updated": now}
 
 
 def gave_up(state: dict, draft_path: str | None) -> ChatcomError:

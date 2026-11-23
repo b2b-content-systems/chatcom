@@ -27,6 +27,11 @@
       ],
       "description": "Pinned per show; every image of the show uses it. null before casting."
     },
+    "take": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "How many times the whole show was recast. A new take means new image keys and file names."
+    },
     "style_sheet": {
       "type": [
         "string",
@@ -67,6 +72,11 @@
           "name": {
             "type": "string",
             "minLength": 1
+          },
+          "take": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "How many times this member was recast (`chatcom recast --member`)."
           },
           "source": {
             "enum": [

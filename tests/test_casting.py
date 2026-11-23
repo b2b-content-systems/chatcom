@@ -572,3 +572,91 @@ def test_appearance_notes_reach_the_first_drawing_with_no_name(lake_show, tmp_pa
     noted = [s for s in seen if "beard, tall" in s]
     assert len(noted) == 1 and "standing relaxed" in noted[0]  # the neutral pose only
     assert "a friend's red cap" in noted[0] and "Mike" not in noted[0]
+
+
+# ---- recast (casting part 2) ---------------------------------------------------------------------
+# Value: protects=a redraw asks first with its exact count, never comes back from the cache, never overwrites an
+# episode's pictures, and a whole recast can leave a retired model; fails_when=recast reuses the old drawing, skips
+# consent, touches files an episode used or keeps the old pin; why_new=casting part 2; seam=ReplayPainter;
+# no_claim=how a real model redraws
+
+def cast_all(capsys, lake_show, tmp_path, beats_s01e01, photo_of=None):
+    drafted(capsys, lake_show, tmp_path, beats_s01e01, photo_of=photo_of)
+    ep = lake_show.episode_dir("S01E01")
+    n = len(casting.plan_for(lake_show, json.loads((ep / "bible.next.json").read_text()),
+                             json.loads(lake_show.cast_path.read_text()), json.loads((ep / "beats.json").read_text())))
+    casting.cast(lake_show, ReplayPainter(), accepted=True, approve_calls=n, say=lambda m: None)
+    return ep, n
+
+
+def test_a_take_changes_the_key_and_take_zero_changes_nothing():
+    c = rules.Call("pose", "p", member="A", pose="neutral")
+    assert rules.content_key("m", c, []) == rules.content_key("m", rules.Call("pose", "p", member="A", pose="neutral",
+                                                                                take=0), [])
+    assert rules.content_key("m", c, []) != rules.content_key("m", rules.Call("pose", "p", member="A",
+                                                                                pose="neutral", take=1), [])
+
+
+@needs_ffmpeg
+def test_recasting_one_member_asks_first_then_draws_a_new_take(lake_show, tmp_path, beats_s01e01, capsys,
+                                                                not_a_tty):
+    ep, _ = cast_all(capsys, lake_show, tmp_path, beats_s01e01)
+    before = json.loads((ep / "cast.next.json").read_text())
+    old = next(m for m in before["members"] if m["name"] == "Mike")["poses"]["neutral"]["file"]
+    painter = ReplayPainter()
+    with pytest.raises(ChatcomError) as e:
+        casting.recast(lake_show, painter, member="mike", accepted=False, approve_calls=None, say=lambda m: None)
+    assert e.value.code == "CHATCOM_E_AWAITING_CONFIRMATION" and e.value.context["calls"] == len(rules.POSES)
+    assert "--member mike" in e.value.context["next_command"] and painter.calls == 0
+    assert json.loads((ep / "cast.next.json").read_text()) == before  # asking wrote nothing
+    res = casting.recast(lake_show, painter, member="mike", accepted=True, approve_calls=len(rules.POSES),
+                         say=lambda m: None)
+    assert painter.calls >= 1  # the neutral pose is never the cached one
+    nxt = json.loads(Path(res["cast_next"]).read_text())
+    mike = next(m for m in nxt["members"] if m["name"] == "Mike")
+    assert mike["take"] == 1 and len(mike["poses"]) == len(rules.POSES)
+    assert mike["poses"]["neutral"]["file"].endswith("neutral.t1.png") and (lake_show.dir / old).exists()
+    others = [m for m in nxt["members"] if m["name"] != "Mike"]
+    assert all(m["poses"] == next(b for b in before["members"] if b["name"] == m["name"])["poses"] for m in others)
+    assert json.loads(lake_show.state_path("S01E01").read_text())["stage"] == "cast"
+    assert not problems("cast", nxt)
+
+
+@needs_ffmpeg
+def test_recasting_a_member_from_a_photo_or_from_texting(lake_show, tmp_path, beats_s01e01, capsys, not_a_tty):
+    ep, _ = cast_all(capsys, lake_show, tmp_path, beats_s01e01)
+    pic = tmp_path / "mike.png"
+    pic.write_bytes(png(40, 50, shot="2026:01:09 19:00:00"))
+    res = casting.recast(lake_show, ReplayPainter(), member="Mike", photo=str(pic), accepted=True,
+                         approve_calls=len(rules.POSES), say=lambda m: None)
+    mike = next(m for m in json.loads(Path(res["cast_next"]).read_text())["members"] if m["name"] == "Mike")
+    assert (mike["source"], mike["reason"], mike["photo"]) == ("photo", None, str(pic))
+    res = casting.recast(lake_show, ReplayPainter(), member="Mike", no_photo=True, accepted=True,
+                         approve_calls=len(rules.POSES), say=lambda m: None)
+    mike = next(m for m in json.loads(Path(res["cast_next"]).read_text())["members"] if m["name"] == "Mike")
+    assert (mike["source"], mike["reason"], mike["photo"], mike["take"]) == ("behavior", "operator_choice", None, 2)
+
+
+@needs_ffmpeg
+def test_a_whole_recast_redraws_everything_and_picks_the_model_again(lake_show, tmp_path, beats_s01e01, capsys,
+                                                                      not_a_tty):
+    ep, n = cast_all(capsys, lake_show, tmp_path, beats_s01e01)
+    with pytest.raises(ChatcomError) as e:
+        casting.recast(lake_show, ReplayPainter(), accepted=True, approve_calls=n - 1, say=lambda m: None)
+    assert e.value.context["calls"] == n  # the whole show: style, every pose, every set
+    res = casting.recast(lake_show, ReplayPainter(), accepted=True, approve_calls=n, say=lambda m: None)
+    nxt = json.loads(Path(res["cast_next"]).read_text())
+    assert nxt["take"] == 1 and nxt["style_sheet"].endswith("style.t1.png") and nxt["image_model"] == "replay-painter"
+    assert all(b["file"].endswith(".t1.png") for b in nxt["backgrounds"] if b["file"])
+    assert all(m["take"] == 1 and len(m["poses"]) == len(rules.POSES) for m in nxt["members"])
+
+
+def test_recast_refuses_unclear_requests(capsys, lake_show, tmp_path, beats_s01e01, not_a_tty):
+    drafted(capsys, lake_show, tmp_path, beats_s01e01)
+    for kw, code in (({"member": "Nobody"}, "CHATCOM_E_UNKNOWN_MEMBER"), ({"no_photo": True}, "CHATCOM_E_USAGE"),
+                     ({"member": "Mike", "photo": str(tmp_path / "missing.png")}, "CHATCOM_E_IMAGE_UNREADABLE")):
+        with pytest.raises(ChatcomError) as e:
+            casting.recast(lake_show, ReplayPainter(), accepted=False, approve_calls=None, say=lambda m: None, **kw)
+        assert e.value.code == code
+    code, out, err = run(capsys, "recast", "lake-house", "--member", "Mike", "--painter", "replay")
+    assert code == 6 and "Mike again (6 poses), plus the images this episode still needs" in out + err
