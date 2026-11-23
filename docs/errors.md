@@ -132,10 +132,10 @@ pass that path. Exit 2.
 Another chatcom run holds this show's lock. A lock whose process is gone is cleared automatically. Exit 2.
 
 ## chatcom_e_state
-A step ran out of order (for example `write-submit` before `ingest --accept-data-flow`, or on an episode that is already drafted, or `recast` before the draft or after the render). `chatcom status <show>` prints the next command. Exit 2.
+A step ran out of order (for example `write-submit` before `ingest --accept-data-flow`, or on an episode that is already drafted, `recast` before the draft or after the render, or `render` before the cast). `chatcom status <show>` prints the next command. `render` also stops here when a drawing, a background or a "Previously on" still is missing or points outside the show folder; the message names the file and the command that draws it again. Exit 2.
 
 ## chatcom_e_beats_invalid
-The writer's `beats.json` failed validation. Every problem is listed with its JSON path. Fix all of them and submit the whole file again. Attempts 1 and 2 exit 2; the third failure exits 4. Exit 2.
+The writer's `beats.json` failed validation. Every problem is listed with its JSON path. Fix all of them and submit the whole file again. Attempts 1 and 2 exit 2; the third failure exits 4. Exit 2. `chatcom render` stops here, before it writes anything, on a draft written before the bubble limit (chatcom 0.1.0.dev8 or older): a scene with more bubbles than its slot holds. Recovery is ask: `chatcom rewrite <show>` sends the episode back to the writer and keeps the messages, the transcript and the drawings; the fix names the writer command to run next.
 
 ## chatcom_e_timezone
 Unknown IANA timezone. Exit 2.
@@ -153,4 +153,7 @@ Neither Claude nor the Gemini fallback could answer (no key, expired key, rate l
 A provider rejected the request itself (HTTP 400). This is a chatcom bug, not an outage, so there is no fallback. Exit 4.
 
 ## chatcom_e_preflight
-`chatcom doctor` found a missing requirement. Exit 3.
+A tool or file a command needs is missing: ffmpeg, ffprobe, Node.js 22 or newer, npm, or the render runtime. The message names it and how to install it. `chatcom render` needs the render runtime: run `chatcom doctor --install` once (it downloads HyperFrames, its Chrome and the emoji and CJK fonts, about 400 MB, into `CHATCOM_HOME/runtime/<version>/`; each font is checked against its sha256). A font that does not match its fingerprint is not kept. Exit 3.
+
+## chatcom_e_render
+The render failed (HyperFrames exited with an error or took longer than 30 minutes), or the master is not 60 s +- 0.1. No `master.mp4` is left behind, so running `chatcom render <show>` again starts over. The `log` field names the render log; report it if the second try fails the same way. Exit 5.
