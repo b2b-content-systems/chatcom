@@ -1,0 +1,277 @@
+"""chatcom command line. Exit codes: 0 success, 2 usage or setup, 3 preflight,
+4 provider, 5 render or encode, 6 awaiting confirmation. The last stdout line
+of a command that makes a file is that file's absolute path."""
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import sys
+from datetime import datetime
+from pathlib import Path
+
+from chatcom import __version__, app
+from chatcom.core.errors import ChatcomError, redact
+
+
+def _local_tz() -> str:
+    if os.environ.get("TZ") and "/" in os.environ["TZ"]:
+        return os.environ["TZ"].lstrip(":")
+    try:
+        target = os.path.realpath("/etc/localtime")
+        if "zoneinfo/" in target:
+            return target.split("zoneinfo/", 1)[1]
+    except OSError:
+        pass
+    return "UTC"
+
+
+def _date(s: str) -> datetime:
+    try:
+        dt = datetime.fromisoformat(s)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"not an ISO 8601 date or time: {s!r}") from None
+    if dt.tzinfo is None:
+        from zoneinfo import ZoneInfo
+        dt = dt.replace(tzinfo=ZoneInfo(_local_tz()))
+    return dt
+
+
+def _pair(s: str) -> tuple[str, str]:
+    if "=" not in s:
+        raise argparse.ArgumentTypeError("expected NAME=PATH")
+    name, path = s.rsplit("=", 1)
+    return name, path
+
+
+def build_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(prog="chatcom", description="Turn your group chat into your favorite TV series.")
+    p.add_argument("--version", action="version", version=f"chatcom {__version__}")
+    p.add_argument("--json", action="store_true", help="print errors as a JSON envelope on stderr")
+    sub = p.add_subparsers(dest="cmd", required=True)
+
+    s = sub.add_parser("new", help="create a show from a WhatsApp export and run setup")
+    s.add_argument("export", nargs="?")
+    s.add_argument("--setup", help="setup.json with the first-run answers")
+    s.add_argument("--show", dest="slug")
+    s.add_argument("--title")
+    s.add_argument("--look", choices=["sitcom", "anime", "cartoon80s", "truecrime", "cutscene", "facetime", "flipphone", "reality"])
+    s.add_argument("--operator")
+    s.add_argument("--cast", action="append", default=None, help="a cast member (repeat)")
+    s.add_argument("--photo", action="append", type=_pair, default=[], metavar="NAME=PATH")
+    s.add_argument("--exclude", action="append", default=[])
+    s.add_argument("--no-photo", action="append", default=[])
+    s.add_argument("--no-cast", action="append", default=[])
+    s.add_argument("--tz")
+    s.add_argument("--max-unparsed", type=float, default=app.MAX_UNPARSED)
+    s.add_argument("--print-setup-template", action="store_true")
+
+    for name, hlp in (("ingest", "(skill mode) step 1 prints the data-flow notice and exits 6; step 2 hands over messages"),
+                      ("episode", "make this week's episode (this release stops after the writer: beats.json)")):
+        e = sub.add_parser(name, help=hlp)
+        e.add_argument("show", nargs="?")
+        e.add_argument("--export", required=True)
+        e.add_argument("--since", type=_date)
+        e.add_argument("--until", type=_date)
+        e.add_argument("--bottle", action="store_true")
+        e.add_argument("--max-days", type=int, default=14)
+        e.add_argument("--max-unparsed", type=float, default=app.MAX_UNPARSED)
+        if name == "ingest":
+            e.add_argument("--confirmed", action="store_true")
+        else:
+            e.add_argument("--writer", choices=["anthropic", "replay", "session"], default="anthropic")
+            e.add_argument("--writer-model", default=os.environ.get("CHATCOM_WRITER_MODEL"))
+            e.add_argument("--replay", help="recorded writer responses (with --writer replay)")
+            e.add_argument("--accept-data-flow", action="store_true")
+            e.add_argument("--dry-run", action="store_true")
+            e.add_argument("--token-budget", type=int, default=12_000)
+
+    w = sub.add_parser("write-prep", help="(skill mode) write the writer bundle and print its path")
+    w.add_argument("show", nargs="?")
+    w.add_argument("--token-budget", type=int, default=12_000)
+
+    w = sub.add_parser("write-submit", help="(skill mode) validate the session's beats.json")
+    w.add_argument("show", nargs="?")
+    w.add_argument("--file", required=True)
+    w.add_argument("--model", required=True, help="the model that wrote the draft, as the session reports it")
+
+    sub.add_parser("shows", help="list shows")
+    sub.add_parser("doctor", help="check this computer for what chatcom needs")
+    return p
+
+
+def _tty() -> bool:
+    return sys.stdin.isatty()
+
+
+def _setup_from(args) -> dict:
+    setup: dict = {}
+    if args.setup:
+        try:
+            setup = json.loads(Path(args.setup).expanduser().read_text("utf-8"))
+        except (OSError, json.JSONDecodeError) as e:
+            raise ChatcomError("CHATCOM_E_SETUP_INVALID", f"cannot read {args.setup}: {e}",
+                               "Pass a JSON file; print a template with `chatcom new --print-setup-template`.") from None
+        setup = {k: v for k, v in setup.items() if not k.startswith("_")}
+    flags = {"slug": args.slug, "title": args.title, "look": args.look, "operator_sender": args.operator,
+             "timezone": args.tz, "cast": args.cast}
+    setup.update({k: v for k, v in flags.items() if v})
+    if args.photo:
+        setup["photos"] = {**setup.get("photos", {}), **dict(args.photo)}
+    for key, val in (("exclude", args.exclude), ("no_photo", args.no_photo), ("no_cast", args.no_cast)):
+        if val:
+            setup[key] = setup.get(key, []) + val
+    return setup
+
+
+def cmd_new(args) -> int:
+    if args.print_setup_template:
+        print(json.dumps(app.setup_template(), indent=2))
+        return 0
+    if not args.export:
+        raise ChatcomError("CHATCOM_E_USAGE", "no export given", "Run `chatcom new <export.zip|export.txt>`.")
+    setup = _setup_from(args)
+    if "operator_sender" not in setup:
+        if not _tty():
+            raise ChatcomError("CHATCOM_E_NO_TERMINAL", "setup needs your sender name and there is no terminal to ask",
+                               "Pass --operator NAME (and other setup flags), or --setup setup.json.")
+        setup["operator_sender"] = input("Your name as it appears in the chat: ").strip()
+        if "title" not in setup:
+            t = input("Show title (Enter to let the writer name it): ").strip()
+            if t:
+                setup["title"] = t
+    show, info = app.new_show(args.export, setup, tz=setup.get("timezone") or _local_tz(), max_unparsed=args.max_unparsed)
+    print(f"show '{info['slug']}' created from {info['messages']} messages "
+          f"({info['format']['platform']}, {info['format']['date_order']}, {info['format']['clock']})")
+    print(f"cast: {', '.join(info['cast'])}")
+    if info["chorus"]:
+        print(f"chorus: {', '.join(info['chorus'])}")
+    if info["masked"]:
+        print(f"{info['masked']} sender(s) shown only as a phone number are masked as 'Unnamed N'; "
+              "add them to aliases in setup.json to name them")
+    print(show.bible_path)
+    return 0
+
+
+def cmd_ingest(args) -> int:
+    show = app.resolve_show(args.show)
+    path, win, st = app.ingest(show, args.export, confirmed=args.confirmed, mode="session", since=args.since,
+                               until=args.until, bottle=args.bottle, max_days=args.max_days,
+                               max_unparsed=args.max_unparsed)
+    print(f"{st['episode']}: {len(win.messages)} messages from {win.start:%Y-%m-%d %H:%M} to {win.end:%Y-%m-%d %H:%M}")
+    if win.gap:
+        print(f"skipped {win.gap['skipped']} older unread messages (over the {args.max_days}-day cap)")
+    print(f"next: chatcom write-prep {show.slug}")
+    print(path)
+    return 0
+
+
+def cmd_episode(args) -> int:
+    show = app.resolve_show(args.show)
+    if args.dry_run:
+        info = app.dry_run(show, args.export, since=args.since, until=args.until, bottle=args.bottle,
+                           max_days=args.max_days, max_unparsed=args.max_unparsed, token_budget=args.token_budget)
+        print(json.dumps(info, indent=2, ensure_ascii=False))
+        return 0
+    if args.writer == "session":
+        raise ChatcomError("CHATCOM_E_USAGE", "the session writer runs through the skill, not `episode`",
+                           f"Use `chatcom ingest {show.slug} --export F`, then write-prep and write-submit.")
+    if args.writer == "replay":
+        if not args.replay:
+            raise ChatcomError("CHATCOM_E_USAGE", "--writer replay needs --replay FILE", "Pass the recorded responses file.")
+        from chatcom.adapters.writers.replay import ReplayWriter
+        writer = ReplayWriter(args.replay)
+        confirmed = True
+    else:
+        from chatcom.adapters.writers.anthropic import AnthropicWriter
+        writer = AnthropicWriter(model=args.writer_model)
+        confirmed = args.accept_data_flow
+        if not confirmed:
+            setup = app.store.read_json(show.setup_path) if show.setup_path.exists() else {}
+            text = app.notice("anthropic", setup.get("exclude", []))
+            if not _tty():
+                raise ChatcomError("CHATCOM_E_NO_TERMINAL", "the data-flow notice needs an answer and there is no terminal",
+                                   "Read the notice in docs/data-flow.md, then pass --accept-data-flow.",
+                                   context={"notice": text})
+            print(text, file=sys.stderr)
+            confirmed = input("Continue? [y/N] ").strip().lower() in ("y", "yes")
+            if not confirmed:
+                print("Stopped. Nothing left this computer.", file=sys.stderr)
+                return 0
+    app.ingest(show, args.export, confirmed=True, mode=writer.mode, since=args.since, until=args.until,
+               bottle=args.bottle, max_days=args.max_days, max_unparsed=args.max_unparsed)
+    res = app.run_writer(show, writer, token_budget=args.token_budget)
+    print(f"{res['episode']} drafted by {res['model']} in {res['attempts']} attempt(s)")
+    print(f"bible after this episode (applied when the episode is committed): {res['bible_next']}")
+    print("render and commit arrive with Next Step 4")
+    print(res["beats"])
+    return 0
+
+
+def cmd_write_prep(args) -> int:
+    show = app.resolve_show(args.show)
+    print(app.write_prep(show, token_budget=args.token_budget))
+    return 0
+
+
+def cmd_write_submit(args) -> int:
+    show = app.resolve_show(args.show)
+    p = Path(args.file).expanduser()
+    try:
+        doc = json.loads(p.read_text("utf-8"))
+    except FileNotFoundError:
+        raise ChatcomError("CHATCOM_E_USAGE", f"no file at {p}", "Write beats.json first, then submit it.") from None
+    except json.JSONDecodeError as e:
+        doc = None
+        print(f"warning: {p.name} is not JSON (line {e.lineno}: {e.msg})", file=sys.stderr)
+    res = app.submit(show, doc, model=args.model, mode="session", draft_path=p)
+    print(f"{res['episode']} drafted ({res['attempts']} attempt(s), model reported: {res['model']})")
+    print(res["beats"])
+    return 0
+
+
+def cmd_shows(args) -> int:
+    rows = app.show_list()
+    if not rows:
+        print("no shows yet: chatcom new <export>")
+    for r in rows:
+        print(f"{r['slug']}\t{r['title'] or '(untitled)'}\tnext {r['next']}\tcast {r['cast']}")
+    return 0
+
+
+def cmd_doctor(args) -> int:
+    ok = True
+    for name, good, detail in app.doctor():
+        print(f"{'ok ' if good else '-- '} {name}: {detail}")
+        ok &= good or "not needed yet" in detail or "not set;" in detail
+    return 0 if ok else 3
+
+
+COMMANDS = {"new": cmd_new, "ingest": cmd_ingest, "episode": cmd_episode, "write-prep": cmd_write_prep,
+            "write-submit": cmd_write_submit, "shows": cmd_shows, "doctor": cmd_doctor}
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    try:
+        return COMMANDS[args.cmd](args)
+    except ChatcomError as e:
+        if args.json:
+            print(json.dumps(e.envelope(), ensure_ascii=False), file=sys.stderr)
+        else:
+            print(e.human(), file=sys.stderr)
+            probs = (e.context.get("problems") or e.context.get("errors")) if isinstance(e.context, dict) else None
+            if probs and e.code in ("CHATCOM_E_BEATS_INVALID", "CHATCOM_E_WRITER_GAVE_UP"):
+                print(json.dumps(probs, ensure_ascii=False, indent=1), file=sys.stderr)
+        return e.exit_code
+    except KeyboardInterrupt:
+        print("stopped", file=sys.stderr)
+        return 130
+    except Exception as e:  # unexpected: never print a key
+        print(redact(f"unexpected error: {type(e).__name__}: {e}"), file=sys.stderr)
+        raise SystemExit(1) from None
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -6,3 +6,7 @@ PLAN.md
 TODOS.md
 .DS_Store
 *.part
+.venv/
+__pycache__/
+*.egg-info/
+.pytest_cache/

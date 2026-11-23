@@ -1,0 +1,5 @@
+[1/15/26, 9:00:01 PM] Dave: one real line
+15 January 2026 9pm Dave said hi
+2026/01/15 21:00 Mike: wrong separator style
+[13/45/26, 9:00:01 PM] Theo: impossible date
+[1/15/26, 9:01:00 PM] Mike: another real line

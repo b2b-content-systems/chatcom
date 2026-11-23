@@ -1,0 +1,163 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/b2b-content-systems/chatcom/schemas/bible.schema.json",
+  "title": "CHATCOM show bible (bible.json)",
+  "description": "Everything a show remembers from week to week: the show, its cast, the running-joke ledger, open storylines and the episode log. Written only when an episode is committed. RULES: an unknown key is an error, so a typo cannot silently drop a field; a key starting with '_' is a comment and is ignored; null means intentionally empty.",
+  "type": "object",
+  "additionalProperties": false,
+  "patternProperties": { "^_": true },
+  "required": ["schema_version", "show", "cast", "chorus", "jokes", "storylines", "episodes"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "show": {
+      "type": "object",
+      "additionalProperties": false,
+      "patternProperties": { "^_": true },
+      "required": ["slug", "title", "look", "season", "next_episode", "operator_sender", "timezone", "created"],
+      "properties": {
+        "slug": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,47}$" },
+        "title": {
+          "type": ["string", "null"],
+          "maxLength": 40,
+          "description": "Display title (THE LAKE HOUSE BOYS). null until the writer names the show in episode 1."
+        },
+        "look": {
+          "enum": ["sitcom", "anime", "cartoon80s", "truecrime", "cutscene", "facetime", "flipphone", "reality"],
+          "description": "The show the group picked. Sets the writer's register and, from Next Step 4, the render template."
+        },
+        "season": { "type": "integer", "minimum": 1 },
+        "next_episode": { "type": "integer", "minimum": 1 },
+        "operator_sender": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The chat member who runs CHATCOM for the group."
+        },
+        "timezone": { "type": "string", "minLength": 1, "description": "IANA zone name, for example America/New_York." },
+        "created": { "type": "string", "format": "date-time" }
+      }
+    },
+    "cast": {
+      "type": "array",
+      "maxItems": 8,
+      "items": { "$ref": "#/$defs/member" },
+      "description": "Up to 8 recurring characters (the credits layout sets the cap)."
+    },
+    "chorus": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "description": "Members who speak in bubbles and quotes but are not drawn."
+    },
+    "jokes": { "type": "array", "items": { "$ref": "#/$defs/joke" } },
+    "storylines": { "type": "array", "items": { "$ref": "#/$defs/storyline" } },
+    "episodes": { "type": "array", "items": { "$ref": "#/$defs/episode" } }
+  },
+  "$defs": {
+    "episode_code": { "type": "string", "pattern": "^S[0-9]{2}E[0-9]{2}$" },
+    "member": {
+      "type": "object",
+      "additionalProperties": false,
+      "patternProperties": { "^_": true },
+      "required": ["name", "role", "traits", "texting_voice", "source", "reason", "aliases"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "role": {
+          "type": ["string", "null"],
+          "maxLength": 32,
+          "description": "Credit role from how they text ('The 2 AM Philosopher'). null until the writer gives one."
+        },
+        "traits": { "type": "array", "items": { "type": "string", "maxLength": 80 }, "maxItems": 8 },
+        "texting_voice": { "type": ["string", "null"], "maxLength": 160 },
+        "source": { "enum": ["photo", "behavior"] },
+        "reason": {
+          "enum": [null, "no_photo_supplied", "operator_choice", "provider_refused"],
+          "description": "Why a member is cast from behavior. null when cast from a photo."
+        },
+        "aliases": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+      }
+    },
+    "joke": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "joke", "first_episode", "last_callback"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^j[0-9]+$" },
+        "joke": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "first_episode": { "$ref": "#/$defs/episode_code" },
+        "last_callback": { "oneOf": [{ "$ref": "#/$defs/episode_code" }, { "type": "null" }] }
+      }
+    },
+    "storyline": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "summary", "status", "opened", "last_seen"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^s[0-9]+$" },
+        "summary": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "status": { "enum": ["open", "resolved"] },
+        "opened": { "$ref": "#/$defs/episode_code" },
+        "last_seen": { "$ref": "#/$defs/episode_code" }
+      }
+    },
+    "cursor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["minute", "hash"],
+      "properties": {
+        "minute": { "type": "string", "description": "UTC minute of the last message used, YYYY-MM-DDTHH:MMZ." },
+        "hash": { "type": "string", "pattern": "^[0-9a-f]{16}$" }
+      }
+    },
+    "episode": {
+      "type": "object",
+      "additionalProperties": false,
+      "patternProperties": { "^_": true },
+      "required": ["code", "title", "window", "synopsis", "bottle", "stills", "writer", "posted_at", "reaction_summary"],
+      "properties": {
+        "code": { "$ref": "#/$defs/episode_code" },
+        "title": { "type": "string", "minLength": 1, "maxLength": 48 },
+        "window": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["from", "to", "cursor", "message_count", "gap"],
+          "properties": {
+            "from": { "type": "string", "format": "date-time" },
+            "to": { "type": "string", "format": "date-time" },
+            "cursor": { "$ref": "#/$defs/cursor" },
+            "message_count": { "type": "integer", "minimum": 0 },
+            "gap": {
+              "type": ["object", "null"],
+              "additionalProperties": false,
+              "required": ["from", "to", "skipped"],
+              "properties": {
+                "from": { "type": "string", "format": "date-time" },
+                "to": { "type": "string", "format": "date-time" },
+                "skipped": { "type": "integer", "minimum": 1 }
+              },
+              "description": "Unread messages older than the window cap, skipped and noted."
+            }
+          }
+        },
+        "synopsis": { "type": "string", "minLength": 1, "maxLength": 160, "description": "At most 18 words; the 'Previously on' card." },
+        "bottle": { "type": "boolean" },
+        "stills": {
+          "type": "array",
+          "items": { "type": "string" },
+          "maxItems": 2,
+          "description": "First frames of scenes 1 and 3, relative to the show folder. Empty until the episode is rendered."
+        },
+        "writer": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["mode", "model", "attempts"],
+          "properties": {
+            "mode": { "enum": ["session", "anthropic", "replay"] },
+            "model": { "type": "string", "minLength": 1 },
+            "attempts": { "type": "integer", "minimum": 1, "maximum": 3 }
+          }
+        },
+        "posted_at": { "type": ["string", "null"], "format": "date-time" },
+        "reaction_summary": { "type": ["string", "null"], "maxLength": 300 }
+      }
+    }
+  }
+}

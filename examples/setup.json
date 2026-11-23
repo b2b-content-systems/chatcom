@@ -1,0 +1,27 @@
+{
+  "_comment": "Answers for `chatcom new --setup setup.json`. Only operator_sender is required.",
+  "title": "THE LAKE HOUSE BOYS",
+  "look": "sitcom",
+  "operator_sender": "Dave",
+  "timezone": "America/New_York",
+  "cast": [
+    "Dave",
+    "Mike",
+    "Theo",
+    "Sam"
+  ],
+  "photos": {
+    "Dave": "~/Pictures/dave.jpg"
+  },
+  "exclude": [],
+  "no_photo": [
+    "Sam"
+  ],
+  "no_cast": [],
+  "aliases": {
+    "Mike": [
+      "Michael R",
+      "+1 (555) 010-2233"
+    ]
+  }
+}
