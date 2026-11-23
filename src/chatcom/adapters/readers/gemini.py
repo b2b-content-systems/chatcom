@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import re
 import threading
+import time
 from collections import Counter
 from functools import lru_cache
 from importlib import resources
@@ -30,6 +31,8 @@ CLAUDE_MODEL = "claude-sonnet-5-5"
 MAX_TOKENS = 6000
 TRIES = 3
 _FENCE = re.compile(r"^\s*```(?:json)?\s*|\s*```\s*$")
+_TRANSIENT = re.compile(r"\((408|429|5\d\d)\)")
+BACKOFF = (2.0, 6.0)  # seconds before each retry of a transient Gemini error
 _ACCOUNT = re.compile(r"credit balance|billing|quota|API_KEY_INVALID|API key not valid|permission_denied", re.I)
 
 
@@ -63,6 +66,7 @@ class GeminiReader:
         self.answered_by: Counter = Counter()
         self.fallbacks: list[str] = []
         self._lock = threading.Lock()
+        self.backoff = BACKOFF
 
     def read(self, image: Path, copy: dict) -> dict:
         data = image.read_bytes()
@@ -93,7 +97,7 @@ class GeminiReader:
         reasons: list[str] = []
         for m in self.models:
             try:
-                return self._count(lf.ask_gemini(prompt, model=m, **common))
+                return self._count(self._gemini_with_retry(prompt, m, common))
             except lf.ModelGone as e:
                 reasons.append(redact(str(e))[:160])
                 continue  # this model id is gone: the next one
@@ -117,6 +121,18 @@ class GeminiReader:
         with self._lock:
             self.fallbacks.append("; ".join(reasons))
         return self._count(ans)
+
+    def _gemini_with_retry(self, prompt: str, model: str, common: dict) -> lf.Answer:
+        """A rate limit or server error is often brief: wait and ask the same
+        model again, a bounded number of times, before falling back."""
+        for wait in (*self.backoff, None):
+            try:
+                return lf.ask_gemini(prompt, model=model, **common)
+            except lf.Unavailable as e:
+                if wait is None or not _TRANSIENT.search(str(e)):
+                    raise
+                time.sleep(wait)
+        raise AssertionError("unreachable")  # pragma: no cover
 
     def _count(self, ans: lf.Answer) -> lf.Answer:
         with self._lock:

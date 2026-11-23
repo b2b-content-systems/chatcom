@@ -44,24 +44,34 @@ def load(paths: list[Path], ctx) -> tuple[ParseResult, str]:
     reader = shots["reader"]
     folder = work / "images"
 
-    def read_one(c: dict, depth: int = 0) -> list[screens.Image]:
+    cache_dir = shots.get("cache_dir")
+
+    def read_one(c: dict, depth: int = 0) -> screens.Image:
+        marker = cache_dir / f"{c['sha256']}-too-long" if cache_dir else None
         try:
-            doc = cached_read(reader, folder / c["file"], c, shots.get("cache_dir"))
+            if marker is not None and marker.exists():
+                raise ReadTooLong(c["file"])  # known from an earlier run: split without paying for it again
+            doc = cached_read(reader, folder / c["file"], c, cache_dir)
         except ReadTooLong:
             if depth >= MAX_SPLITS:
                 raise ChatcomError("CHATCOM_E_READER_GAVE_UP", f"{c['image']} holds more text than a read can "
                                    "return, even split", "Take that part of the chat in shorter screenshots.",
                                    recovery="ask", side_effects="partial", context={"image": c["image"]}) from None
-            return [img for half in image_ops.split_copy(c, folder) for img in read_one(half, depth + 1)]
-        return [screens.Image(c["file"], datetime.fromisoformat(c["captured"]).date(), doc["rows"],
-                              doc.get("chat_name"))]
+            if marker is not None:
+                marker.parent.mkdir(parents=True, exist_ok=True)
+                marker.write_text("1")
+            top, bottom = (read_one(h, depth + 1) for h in image_ops.split_copy(c, folder))
+            # the halves are one screenshot again before the join, so order rules see one image
+            return screens.merge_halves(top, bottom)
+        return screens.Image(c["file"], datetime.fromisoformat(c["captured"]).date(), doc["rows"],
+                             doc.get("chat_name"))
 
     # up to 3 reads at once; results keep manifest order. On the first error the reads not yet started are
     # cancelled, so a failing import stops paying; reads already done are in the cache for the retry.
     pool = ThreadPoolExecutor(max_workers=PARALLEL if reader.mode != "replay" else 1)
     futures = [pool.submit(read_one, c) for c in copies]
     try:
-        reads = [img for f in futures for img in f.result()]
+        reads = [f.result() for f in futures]
     except BaseException:
         pool.shutdown(wait=True, cancel_futures=True)
         raise

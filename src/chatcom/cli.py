@@ -65,6 +65,15 @@ def _shot_flags(p: argparse.ArgumentParser, *, reading: bool) -> None:
         p.add_argument("--replay-reads", help="screenshots: recorded reads (with --writer replay)")
 
 
+_MODEL_ID = __import__("re").compile(r"^[a-z0-9][a-z0-9.\-]{0,63}$")
+
+
+def _model_id(s: str) -> str:
+    if not _MODEL_ID.match(s):
+        raise argparse.ArgumentTypeError(f"not a model id: {s!r} (for example gemini-3.8-flash)")
+    return s
+
+
 def _shots(args) -> dict:
     return {"speakers": dict(args.speaker), "max_images": args.max_images,
             "reverse": getattr(args, "reverse", None), "anchor": getattr(args, "anchor_date", None),
@@ -107,7 +116,7 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--writer", choices=["anthropic", "replay", "session"], default="anthropic",
                    help="screenshots: the mode, which picks the reader and the notice")
     _shot_flags(s, reading=True)
-    s.add_argument("--reader-model", help="screenshots in CLI mode: the Gemini model that reads them "
+    s.add_argument("--reader-model", type=_model_id, help="screenshots in CLI mode: the Gemini model that reads them "
                                           "(default gemini-3.6-flash, then gemini-3.8-flash)")
 
     for name, hlp in (("ingest", "(skill mode) step 1 prints the data-flow notice and exits 6; step 2 hands over messages"),
@@ -133,7 +142,7 @@ def build_parser() -> argparse.ArgumentParser:
             e.add_argument("--replay", help="recorded writer responses (with --writer replay)")
             e.add_argument("--dry-run", action="store_true")
             e.add_argument("--token-budget", type=int, default=12_000)
-            e.add_argument("--reader-model", help="screenshots in CLI mode: the Gemini model that reads them "
+            e.add_argument("--reader-model", type=_model_id, help="screenshots in CLI mode: the Gemini model that reads them "
                                                   "(default gemini-3.6-flash, then gemini-3.8-flash)")
             e.add_argument("--review", action="store_true",
                            help="screenshots: stop after transcript.txt so you can check it, then import that file")

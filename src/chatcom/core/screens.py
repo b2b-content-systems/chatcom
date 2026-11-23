@@ -163,6 +163,15 @@ def overlap(a: Image, b: Image) -> int:
     return 0
 
 
+def merge_halves(a: Image, b: Image) -> Image:
+    """The top and bottom halves of one split image as one image again: the
+    rows b repeats from a are dropped, so join() never sees two screenshots."""
+    k = overlap(a, b)
+    head = {id(r) for r in _messages(b)[:k]}
+    return Image(a.name, a.captured, list(a.rows) + [r for r in b.rows if id(r) not in head],
+                 a.chat_name or b.chat_name)
+
+
 def _times(img: Image) -> list[int]:
     out = []
     for r in _messages(img):

@@ -23,6 +23,11 @@ needs_ffmpeg = pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg
 
 
 @pytest.fixture(autouse=True)
+def no_wait(monkeypatch):
+    monkeypatch.setattr(G, "BACKOFF", (0.0, 0.0))
+
+
+@pytest.fixture(autouse=True)
 def keys(monkeypatch):
     monkeypatch.setenv("GEMINI_API_KEY", "test-gemini")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-claude")
@@ -86,9 +91,9 @@ def test_a_gone_model_moves_to_the_next_gemini_then_claude(tmp_path):
     assert r.read(p, c) == GOOD and [k for k, *_ in f.calls] == ["gemini-3.6-flash", "gemini-3.8-flash"]
     f2 = Fake(**{"gemini-3.6-flash": [(503, {})], "claude": [claude_ok(GOOD)]})
     r2 = G.GeminiReader(transport=f2)
-    assert r2.read(p, c) == GOOD and [k for k, *_ in f2.calls] == ["gemini-3.6-flash", "claude"]
+    assert r2.read(p, c) == GOOD and [k for k, *_ in f2.calls] == ["gemini-3.6-flash"] * 3 + ["claude"]
     assert r2.fallbacks and "503" in r2.fallbacks[0]
-    claude_payload = f2.calls[1][2]
+    claude_payload = f2.calls[-1][2]
     assert claude_payload["messages"][0]["content"][0]["type"] == "image" and "temperature" not in claude_payload
 
 
@@ -201,6 +206,8 @@ def test_a_reply_cut_off_at_the_token_limit_is_split_without_spending_a_try(caps
     imgs = sorted(p.name for p in next((chatcom_home / "lake-house-boys" / "imports").glob("*/images")).iterdir())
     # 1 cut reply + 1 for the halves (identical test pixels: the second half is a cache hit) + 2 others
     assert "001a.png" in imgs and "001b.png" in imgs and seen["calls"] == 4
+    marker = list((chatcom_home / "lake-house-boys" / "imports").glob("*"))
+    assert marker  # the too-long marker lived in the new-show cache and moved with the show
 
 
 
@@ -269,3 +276,40 @@ def test_a_failed_new_keeps_its_paid_reads_for_the_retry(capsys, chatcom_home, t
     assert seen["calls"] == 3  # every read came from the kept cache
     show_cache = chatcom_home / json.loads(out)["slug"] / "cache" / "reads"
     assert len(list(show_cache.glob("*.json"))) == 3 and not any((chatcom_home / "imports" / "cache").iterdir())
+
+
+
+# ---- PR 6 adversarial review ------------------------------------------------------------------------
+
+def test_a_rate_limit_is_retried_before_falling_back(tmp_path):
+    p, c = copy(tmp_path)
+    f = Fake(**{"gemini-3.6-flash": [(429, {}), (503, {}), gemini_ok(GOOD)]})
+    r = G.GeminiReader(transport=f)
+    assert r.read(p, c) == GOOD and [k for k, *_ in f.calls] == ["gemini-3.6-flash"] * 3 and not r.fallbacks
+    f2 = Fake(**{"gemini-3.6-flash": [(429, {})], "claude": [claude_ok(GOOD)]})
+    assert G.GeminiReader(transport=f2).read(p, c) == GOOD
+    assert [k for k, *_ in f2.calls] == ["gemini-3.6-flash"] * 3 + ["claude"]  # bounded: 2 retries, then Claude
+
+
+def test_split_halves_join_as_one_image_even_newest_first():
+    from datetime import date
+    from zoneinfo import ZoneInfo
+    from chatcom.core import screens as S
+
+    def r(t):
+        return {"type": "message", "side": "left", "name": "Mike", "text": t, "time": None}
+    top = S.Image("2a", date(2026, 1, 9), [r("m5"), r("m6"), r("m7")])
+    bottom = S.Image("2b", date(2026, 1, 9), [r("m6"), r("m7"), r("m8"), r("m9")])
+    newer = S.merge_halves(top, bottom)
+    older = S.Image("1", date(2026, 1, 9), [r("m3"), r("m4"), r("m5"), r("m6")])
+    for order, rev in (([older, newer], None), ([newer, older], True)):
+        j = S.join(order, tz=ZoneInfo(TZ), operator="Dave", reverse=rev)
+        assert [m["text"] for m in j.messages] == ["m3", "m4", "m5", "m6", "m7", "m8", "m9"], order
+
+
+@pytest.mark.parametrize("bad", ["../x", "gemini 3", "A" * 70, "gemini/x"])
+def test_reader_model_must_be_a_model_id(capsys, lake_show, bad, monkeypatch):
+    monkeypatch.setattr(cli, "_tty", lambda: False)
+    with pytest.raises(SystemExit) as e:
+        cli.main(["--json", "episode", "lake-house", "--export", "x", "--reader-model", bad])
+    assert e.value.code == 2 and "not a model id" in capsys.readouterr().err
