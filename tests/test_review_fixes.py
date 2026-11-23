@@ -282,8 +282,9 @@ def test_store_writes_are_atomic_and_private(chatcom_home):
 
 
 # Value: protects=masking leaves dates, times, lists, URL ids and long account numbers alone; fails_when=the pattern widens back to any 10-digit run; why_new=the fix-check saw dates become 'Unnamed' people; seam=none; no_claim=every national phone format
-@pytest.mark.parametrize("text", ["meet 2024-01-15 10:30", "meet 22.11.2026 10:30", "pi 3.14159265358",
-                                  "see https://x.com/status/1234567890123", "at 10:30", "call 911", "code 12345"])
+@pytest.mark.parametrize("text", ["meet 2024-01-15 10:30", "meet 22.11.2026 10:30", "pi 3.1416",
+                                  "see https://x.com/status/1876543210987654321", "at 10:30", "call 911",
+                                  "code 12345", "season 2024-2025", "price 1.250.000", "score 3-1"])
 def test_masking_spares_non_phone_numbers(text):
     assert whatsapp.mask_numbers(text, {}) == text
 
@@ -311,8 +312,8 @@ def test_same_number_with_or_without_country_code_is_one_label():
 
 
 def test_nine_digit_numbers_are_masked_decimals_are_not():
-    out = whatsapp.mask_numbers("call 612 34 56 78, 612345678 or +34 612 345 678, pi is 3.14159265358", {})
-    assert "612" not in out and "3.14159265358" in out
+    out = whatsapp.mask_numbers("call 612 34 56 78, 612345678 or +34 612 345 678, pi is 3.1416", {})
+    assert "612" not in out and "3.1416" in out
 
 
 # Value: protects=a member quiet in episode 1 or new since can speak as chorus and is added to the bible; fails_when=chorus comes only from episode 1's window and new senders burn writer attempts; why_new=adversarial review; seam=none; no_claim=casting new members
@@ -417,7 +418,13 @@ LEAK_PROBES = ["ruf an: 0151/12345678", "Tel. 030/1234567", "+49 151/12345678", 
                "_+1 555 010 2233_", "https://wa.me/15550102233", "555 010 2233 555 010 4455",
                "06 12 34 56 78 06 98 76 54 32", "0151.12345678", "0612.345678", "5550.102233", "11 91234\u20135678",
                "+1\u202f555\u202f010\u202f2233", "Telefon5550102233", "N\u00ba5550102233", "5550102233x",
-               "my cell 555-010-2233: text me", "phone=5550102233", "612345678", "tel:+15550102233", "@15550102233 hi"]
+               "my cell 555-010-2233: text me", "phone=5550102233", "612345678", "tel:+15550102233", "@15550102233 hi",
+               # round 5: exotic separators, other apps' phone links, numbers glued to links, local numbers
+               "555\u2009010\u20092233", "555\u2002010\u20022233", "555\u3000010\u30002233", "555\u2212010\u22122233",
+               "555\u00b7010\u00b72233", "https://t.me/+15550102233", "https://signal.me/#p/+15550102233",
+               "viber://chat?number=%2B15550102233", "facetime://+15550102233", "https://maps.google.com/?q=+15550102233",
+               "see https://example.com/,+15550102233", "www.example.de/030-12345678", "call 555-0102",
+               "liga no 3456-7890", "Durchwahl 12345678", "34.612345678", "1.8005550199", "12.345678901234567890"]
 
 
 @pytest.mark.parametrize("text", LEAK_PROBES)
@@ -425,4 +432,21 @@ def test_no_probe_leaks(text):
     import re as _re
     out = whatsapp.mask_numbers(text, {})
     rest = _re.sub(r"Unnamed [0-9a-f]{6}", "", out)
-    assert not _re.search(r"\d{5,}", _re.sub(r"[\s/.\-\u2013\u202f()+]", "", rest)), out
+    assert not _re.search(r"\d{7,}", _re.sub(r"\D", "", rest)), out
+
+
+
+# Value: protects=no message text can crash masking (it runs on every message); fails_when=a placeholder or index scheme comes back; why_new=fix-check round 5 crashed it with NUL characters; seam=none; no_claim=none beyond protects
+@pytest.mark.parametrize("text", ["x\x00y\x00 z", "\x00a\x00", "\x00\ue000\x00 https://a.com/1", "\x00\U0010ffff\x00", "\x00" * 5])
+def test_masking_never_crashes(text):
+    assert whatsapp.mask_numbers(text, {}) == text
+
+
+def test_national_number_matches_its_country_code_alias():
+    amap = whatsapp._alias_map({"Lucia": ["+34 612 34 56 78"]})
+    assert whatsapp.mask_numbers("llama al 612 34 56 78", amap) == "llama al Lucia"
+
+
+@pytest.mark.parametrize("text", ["flight 2026-01-15 at 9:41", "on 15.01.2026", "on 15/01/26", "on 1/15/2026 10:30"])
+def test_dates_of_any_length_are_not_masked(text):
+    assert whatsapp.mask_numbers(text, {}) == text

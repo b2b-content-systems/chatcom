@@ -6,7 +6,7 @@ Every run that sends anything prints this first and waits for a yes.
 
 **CLI mode (`--writer anthropic`):** the chat text goes to Anthropic with your `ANTHROPIC_API_KEY`, and to Google if the Gemini fallback fires (no key, expired key, rate limit or outage). Photos and image prompts: Google, as above. Scripts answer the notice with `--accept-data-flow`.
 
-**Never sent:** the raw export, media files, location links, anyone you `exclude` (and @mentions of them, by name or alias), phone numbers (a number-only sender, WhatsApp's number-style @mentions, `wa.me` and `tel:` links, and any run of 9 or more digits typed in a message become a stable `Unnamed` label or the alias you set; only dates, short decimals and the digits inside ordinary links are left as written), your `aliases` list, and your API keys (sent only in request headers, redacted from every log and error).
+**Never sent:** the raw export, media files, location links, anyone you `exclude` (and @mentions of them, by name or alias), phone numbers (a number-only sender, WhatsApp's number-style @mentions, and in message text any run of 9 or more digits, a 7 or 8 digit number grouped like a phone or after a word like "tel" or "call", and the phone part of any link, become a stable `Unnamed` label or the alias you set; dates, short decimals such as 3.14, and ids longer than 15 digits inside links are left as written. The matching is deliberately broad, so some non-phone numbers are hidden too), your `aliases` list, and your API keys (sent only in request headers, redacted from every log and error).
 
 **On disk:** everything lives in `CHATCOM_HOME` (default `~/.chatcom/`, mode 0700), outside any git checkout. CHATCOM never uploads a chat or hosts one.
 
