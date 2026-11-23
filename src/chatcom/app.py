@@ -206,11 +206,12 @@ def NEW_READ_CACHE() -> Path:
 def _adopt_reads(import_dir: Path, show_cache: Path) -> None:
     """Move the cached reads of this import's copies from the new-show cache
     into the show's own cache."""
-    manifest = import_dir / "manifest.json"
-    if not manifest.exists() or not NEW_READ_CACHE().exists():
+    if not NEW_READ_CACHE().exists():
         return
-    shas = {c["sha256"] for c in store.read_json(manifest).get("copies", [])}
-    for f in NEW_READ_CACHE().glob("*.json"):
+    import hashlib
+    # every image file of the import: the copies and any halves a too-long read was split into
+    shas = {hashlib.sha256(f.read_bytes()).hexdigest() for f in (import_dir / "images").glob("*.png")}
+    for f in NEW_READ_CACHE().iterdir():  # reads and too-long markers
         if f.name.split("-", 1)[0] in shas:
             show_cache.mkdir(parents=True, exist_ok=True)
             f.rename(show_cache / f.name)
@@ -459,9 +460,11 @@ def ingest(show: store.Show, export, *, accepted: bool, mode: str, since: dateti
         st["unparsed_rate"] = round(res.unparsed_rate, 4)
         st["source"] = res.adapter
         st["resume"] = {"method": win.method, "warning": win.warning}
-        if res.artifacts.get("reader_calls") or (prior or {}).get("reader_calls"):
-            # billed to the operator's own Gemini key; a continued --review import keeps its count
-            st["reader_calls"] = res.artifacts.get("reader_calls") or prior.get("reader_calls")
+        continuing = bool(prior and prior["stage"] == "read" and prior.get("transcript") and
+                          all(Path(e).expanduser().resolve() == Path(prior["transcript"]).resolve() for e in exports))
+        calls = res.artifacts.get("reader_calls") or (prior.get("reader_calls") if continuing else 0)
+        if calls:  # billed to the operator's own Gemini key; only a continued --review import keeps its count
+            st["reader_calls"] = calls
         if res.artifacts.get("reader_answered"):
             st["reader_answered"] = res.artifacts["reader_answered"]
         ep = show.episode_dir(code)

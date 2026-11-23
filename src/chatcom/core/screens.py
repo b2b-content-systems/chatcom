@@ -166,9 +166,16 @@ def overlap(a: Image, b: Image) -> int:
 def merge_halves(a: Image, b: Image) -> Image:
     """The top and bottom halves of one split image as one image again: the
     rows b repeats from a are dropped, so join() never sees two screenshots."""
-    k = overlap(a, b)
-    head = {id(r) for r in _messages(b)[:k]}
-    return Image(a.name, a.captured, list(a.rows) + [r for r in b.rows if id(r) not in head],
+    top = [dict(r) for r in a.rows]  # copies: the reads are never changed
+    a2 = Image(a.name, a.captured, top, a.chat_name)
+    k = overlap(a2, b)
+    head = _messages(b)[:k]
+    for p, h in zip(_messages(a2)[-k:] if k else [], head):
+        if p.get("partial") and not h.get("partial"):  # the split line cut this bubble: keep the whole copy
+            p.clear()
+            p.update(h)
+    drop = {id(r) for r in head}
+    return Image(a.name, a.captured, top + [dict(r) for r in b.rows if id(r) not in drop],
                  a.chat_name or b.chat_name)
 
 

@@ -73,6 +73,11 @@ class GeminiReader:
         feedback = ""
         for _ in range(TRIES):
             ans = self._ask(data, instructions() + feedback)
+            if ans.provider == "gemini" and (ans.finish == "other" or not ans.text.strip()):
+                # a safety block or an empty reply: Claude, not the same model again
+                with self._lock:
+                    self.fallbacks.append(f"Gemini returned no read (finish {ans.finish})")
+                ans = self._ask(data, instructions() + feedback, skip_gemini=True)
             if ans.cut_off:
                 raise ReadTooLong(copy["file"])
             try:
@@ -91,11 +96,11 @@ class GeminiReader:
                            "transcript (docs/transcript-format.md).", recovery="ask", side_effects="partial",
                            context={"image": copy["image"], "copy": copy["file"]})
 
-    def _ask(self, data: bytes, prompt: str) -> lf.Answer:
+    def _ask(self, data: bytes, prompt: str, skip_gemini: bool = False) -> lf.Answer:
         img = [lf.Image(data, "image/png")]
         common = dict(images=img, json_schema=_schema(), max_tokens=MAX_TOKENS, transport=self.transport)
-        reasons: list[str] = []
-        for m in self.models:
+        reasons: list[str] = ["Gemini refused this image"] if skip_gemini else []
+        for m in ([] if skip_gemini else self.models):
             try:
                 return self._count(self._gemini_with_retry(prompt, m, common))
             except lf.ModelGone as e:

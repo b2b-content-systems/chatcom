@@ -313,3 +313,56 @@ def test_reader_model_must_be_a_model_id(capsys, lake_show, bad, monkeypatch):
     with pytest.raises(SystemExit) as e:
         cli.main(["--json", "episode", "lake-house", "--export", "x", "--reader-model", bad])
     assert e.value.code == 2 and "not a model id" in capsys.readouterr().err
+
+
+
+# ---- PR 6 red team ----------------------------------------------------------------------------------
+
+def test_merge_halves_keeps_the_whole_bubble_at_the_split_line():
+    from datetime import date
+    from chatcom.core import screens as S
+
+    def r(t, **kw):
+        return {"type": "message", "side": "left", "name": "Mike", "text": t, "time": None, **kw}
+    top = S.Image("2a", date(2026, 1, 9), [r("one"), r("a long message cut by the spl", partial="bottom")])
+    bottom = S.Image("2b", date(2026, 1, 9), [r("a long message cut by the split line"), r("three")])
+    m = S.merge_halves(top, bottom)
+    assert [x["text"] for x in m.rows] == ["one", "a long message cut by the split line", "three"]
+    assert not any(x.get("partial") for x in m.rows) and top.rows[1]["partial"] == "bottom"
+
+
+@needs_ffmpeg
+def test_a_split_import_leaves_nothing_in_the_shared_cache(capsys, chatcom_home, tmp_path, monkeypatch):
+    monkeypatch.setattr(cli, "_tty", lambda: False)
+    transport, seen = _routing_fake(cut_first=True)
+    monkeypatch.setattr(lf, "http_transport", transport)
+    monkeypatch.setattr("chatcom.adapters.screenshots.PARALLEL", 1)
+    code, out, err = run(capsys, "--json", "new", str(_shots(tmp_path / "shots")), "--operator", "Dave", "--tz", TZ,
+                         "--accept-data-flow")
+    assert code == 0, err
+    left = [p.name for p in (chatcom_home / "imports" / "cache").iterdir()]
+    assert not left, left
+    cache = chatcom_home / json.loads(out)["slug"] / "cache" / "reads"
+    assert any(p.name.endswith("-too-long") for p in cache.iterdir())
+
+
+def test_a_gemini_safety_block_goes_to_claude_at_once(tmp_path):
+    p, c = copy(tmp_path)
+    blocked = (200, {"candidates": [{"content": {"parts": []}, "finishReason": "SAFETY"}]})
+    f = Fake(**{"gemini-3.6-flash": [blocked], "claude": [claude_ok(GOOD)]})
+    r = G.GeminiReader(transport=f)
+    assert r.read(p, c) == GOOD and [k for k, *_ in f.calls] == ["gemini-3.6-flash", "claude"]
+    assert "no read" in r.fallbacks[0]
+
+
+@needs_ffmpeg
+def test_a_rerun_does_not_bill_old_reads(capsys, lake_show, tmp_path, monkeypatch):
+    monkeypatch.setattr(cli, "_tty", lambda: False)
+    transport, seen = _routing_fake()
+    monkeypatch.setattr(lf, "http_transport", transport)
+    inbox = _shots(lake_show.inbox / "week2")
+    base = ["--json", "episode", "lake-house", "--export", str(inbox), "--accept-data-flow", "--review"]
+    assert run(capsys, *base)[0] == 0
+    assert run(capsys, *base, "--replace")[0] == 0  # every read is a cache hit
+    st = json.loads(lake_show.state_path("S01E01").read_text("utf-8"))
+    assert "reader_calls" not in st and seen["calls"] == 3
