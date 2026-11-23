@@ -17,6 +17,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import urllib.request
@@ -51,10 +52,14 @@ def root(version: str = VERSION) -> Path:
     return store.home() / "runtime" / version
 
 
+_SECRET_NAME = re.compile(r"(API_?KEY|TOKEN|SECRET|PASSWORD|CREDENTIALS?)$|^(AWS|GOOGLE_APPLICATION)_", re.I)
+
+
 def env(version: str = VERSION) -> dict:
-    """The environment every HyperFrames child runs with: no telemetry, and its
-    Chrome cache inside the runtime folder."""
-    e = dict(os.environ)
+    """The environment every HyperFrames and npm child runs with: no telemetry,
+    its Chrome cache inside the runtime folder, and no key or token variable
+    (npm runs third-party install scripts; the render needs no key)."""
+    e = {k: v for k, v in os.environ.items() if not _SECRET_NAME.search(k)}
     e["HYPERFRAMES_NO_TELEMETRY"] = "1"
     e["HYPERFRAMES_CACHE_DIR"] = str(root(version) / "cache")
     return e

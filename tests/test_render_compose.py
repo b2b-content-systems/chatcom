@@ -488,3 +488,64 @@ def test_doctor_lists_the_runtime_and_a_missing_one_is_not_a_failure(capsys, mon
     runtime.root().mkdir(parents=True)
     (runtime.root() / "installed.json").write_text("{}")
     assert next(g for n, g, _ in doctor() if n.startswith("render runtime")) is True
+
+
+# ---- pre-landing review fixes (pass 1) ---------------------------------------------------------------
+# Value: protects=a failed re-render never leaves `rendered` with no master, and says what it removed;
+# fails_when=the stage is left at rendered after the old master is wiped; why_new=review found it (QA replayed it);
+# seam=HyperFrames (a runner that fails); no_claim=a real Chrome crash
+@needs_ffmpeg
+def test_a_failed_rerender_goes_back_to_cast_and_says_so(cast_show, monkeypatch, tmp_path):
+    monkeypatch.setattr(runtime, "fonts_dir", lambda version=runtime.VERSION: big_fonts(tmp_path))
+    app.render(cast_show, runner=fake_runner)
+
+    def boom(project, master, *, expected, log):
+        raise ChatcomError("CHATCOM_E_RENDER", "the render failed (HyperFrames exit 1)", "Run it again.",
+                           recovery="retry")
+    with pytest.raises(ChatcomError) as e:
+        app.render(cast_show, runner=boom)
+    st = store.read_json(cast_show.state_path("S01E01"))
+    assert st["stage"] == "cast" and not (cast_show.episode_dir("S01E01") / "render" / "master.mp4").exists()
+    assert e.value.side_effects == "partial" and "back at stage 'cast'" in e.value.fix
+    assert app.status(cast_show)["next"] == "chatcom render lake-house"
+    assert app.render(cast_show, runner=fake_runner)["stage"] == "rendered"  # and it renders again
+
+
+# Value: protects=no provider key or token reaches npm's install scripts or HyperFrames; fails_when=env() goes back
+# to copying os.environ; why_new=review found the keys passed through; seam=none; no_claim=what a child does with
+# the variables that remain
+def test_the_render_children_get_no_keys_or_tokens(monkeypatch):
+    for name in ("GEMINI_API_KEY", "ANTHROPIC_API_KEY", "GH_TOKEN", "NPM_TOKEN", "SOME_SECRET", "AWS_PROFILE"):
+        monkeypatch.setenv(name, "x")
+    monkeypatch.setenv("PATH", os.environ.get("PATH", "/bin"))
+    env = runtime.env()
+    assert not {"GEMINI_API_KEY", "ANTHROPIC_API_KEY", "GH_TOKEN", "NPM_TOKEN", "SOME_SECRET", "AWS_PROFILE"} & set(env)
+    assert env["PATH"] and env["HYPERFRAMES_NO_TELEMETRY"] == "1"
+
+
+# Value: protects=a render that hangs past the limit ends with its whole process group, so no Chrome is left
+# running; fails_when=only the node child is killed; why_new=review found orphaned Chrome on timeout;
+# seam=HyperFrames (a fake that starts a child and hangs); no_claim=puppeteer's own cleanup
+def test_a_hung_render_is_stopped_with_everything_it_started(tmp_path, monkeypatch):
+    monkeypatch.setattr(hyperframes, "RENDER_SECONDS", 1)
+    monkeypatch.setattr(hyperframes, "STOP_GRACE", 2)
+    monkeypatch.setattr(tools, "ffprobe", lambda why="": "/bin/true")
+    pidfile = tmp_path / "child.pid"
+    exe = tmp_path / "hyperframes"
+    exe.write_text(f'#!/bin/sh\nsleep 120 &\necho $! > "{pidfile}"\nwait\n')
+    exe.chmod(exe.stat().st_mode | stat.S_IEXEC)
+    project = tmp_path / "render"
+    project.mkdir()
+    with pytest.raises(ChatcomError) as e:
+        hyperframes.render(project, project / "master.mp4", expected=60.0, log=project / "render.log", binary=exe)
+    assert e.value.code == "CHATCOM_E_RENDER" and "was stopped" in e.value.what
+    child = int(pidfile.read_text())
+    import time
+    for _ in range(20):  # the group was signalled; give the kernel a moment to reap it
+        try:
+            os.kill(child, 0)
+        except ProcessLookupError:
+            break
+        time.sleep(0.1)
+    else:
+        pytest.fail(f"the render's child process {child} is still running")

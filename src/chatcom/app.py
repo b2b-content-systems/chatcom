@@ -678,11 +678,18 @@ def render(show: store.Show, *, runner=None, say=lambda s: None) -> dict:
         tl = render_ops.timeline(beats, sheet, render_ops.previous_entry(bible),
                                  show_title=nxt["show"]["title"] or beats.get("show_title") or show.slug)
         build = ep / "render"
-        index = composer.write_project(tl, sheet, show.dir, build, big_fonts=runtime.fonts_dir())
-        say(f"{code}: rendering {tl.total:.0f} s with HyperFrames {runtime.VERSION}")
         master = build / "master.mp4"
         run = runner or (lambda p, m, **kw: hyperframes.render(p, m, binary=binary, **kw))
-        seconds = run(index.parent, master, expected=tl.total, log=build / "render.log")
+        try:
+            index = composer.write_project(tl, sheet, show.dir, build, big_fonts=runtime.fonts_dir())
+            say(f"{code}: rendering {tl.total:.0f} s with HyperFrames {runtime.VERSION}")
+            seconds = run(index.parent, master, expected=tl.total, log=build / "render.log")
+        except ChatcomError as e:
+            if st["stage"] == "rendered":  # the old master is gone: the episode is back to `cast`
+                store.write_json(show.state_path(code), {**st, "stage": "cast", "updated": store.now()})
+                e.side_effects = "partial"
+                e.fix += f" The earlier render was removed; {code} is back at stage 'cast'."
+            raise
         if st["stage"] == "cast":
             st = state_ops.advance(st, "rendered", store.now())
         st = {**st, "updated": store.now()}
