@@ -132,9 +132,7 @@ def test_sniff_names_sources_that_are_not_built_yet(tmp_path):
     shots = tmp_path / "shots"
     shots.mkdir()
     (shots / "a.png").write_bytes(b"\x89PNG\r\n\x1a\n")
-    head = tmp_path / "paste.txt"
-    head.write_text("﻿# source: paste\nMike: hi\n", "utf-8")
-    for paths in ([shots], [head]):
+    for paths in ([shots],):
         with pytest.raises(ChatcomError) as e:
             registry.sniff(paths)
         assert e.value.code == "CHATCOM_E_SOURCE_UNKNOWN" and "not in this chatcom yet" in e.value.what

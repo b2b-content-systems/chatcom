@@ -16,7 +16,7 @@ reference; [`docs/design/any-group-chat.md`](docs/design/any-group-chat.md) is t
    `order`); `source.label` is the sender exactly as the export shows it, before aliases.
 3. **Drop system lines** (joins, renames, encryption notices, missed calls). They are not messages.
 4. **Resolve time in the show's zone.** Exports without an offset are local time; use the show's IANA zone and
-   keep time moving forward through a DST fall-back (see `_localize`).
+   keep time moving forward through a DST fall-back (`chatcom.core.clock.localize`). Rows with no clock time get a synthetic time from `clock.Synthetic`.
 5. **Hash messages the same way, with the show's key:** `chatcom.core.messages.message_hash(label, utc_minute,
    ordinal, text, media, deleted, key)` for timed rows, `context_hash(...)` for rows with no time. Hash the raw
    label, not the aliased name, so renaming never changes an id. The same chat imported twice must give the same
