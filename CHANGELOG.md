@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.1.0.dev3 (2026-11-23)
+
+Any group chat, PR 3 of 7: Telegram.
+
+### Added
+- Telegram Desktop exports (`docs/telegram-export.md`): pass the `ChatExport_…` folder or its `result.json`.
+  Exact times, edits, media kinds, polls, reactions with names and counts, and replies (with a quote of the
+  message they answer). Service lines are dropped.
+- A whole-account export is read one chat at a time with `--thread NAME` (or the chat id); without it,
+  `CHATCOM_E_THREAD_REQUIRED` lists the chats. Profile, contacts and other chats are never read.
+- Sniffing recognizes Telegram exports by peeking at the start of `result.json`, never loading a large file
+  whole. Other JSON files and Telegram's HTML export are refused.
+
 ## 0.1.0.dev2 (2026-11-23)
 
 Any group chat, PR 2 of 7: the transcript adapter.
