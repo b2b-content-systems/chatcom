@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.1.0.dev8 (2026-11-23)
+
+Next Step 3, part 1: casting.
+
+### Added
+- `chatcom cast <show>`: after the draft, draws each cast member in 6 poses (neutral, talking, laughing, typing,
+  facepalm, shrug), a style frame for the look, and the sets (3 starters, up to 2 new locations per episode). Members
+  with a reference photo are drawn from it; the rest are original characters from how they text, never a guess at a
+  real face, and never sent a name.
+- Consent and spend: the notice says what goes to Google; `--approve-calls N` must equal the planned count.
+- `gemini-nano-banana-2.1` by default, `gemini-3.1-flash-image` as the fallback; a show keeps one model. A model that is
+  gone or keeps failing moves the whole batch; a quota stop keeps what was drawn; a refused photo casts that member from
+  how they text.
+- Images are content-addressed in the show's cache: a rerun never pays twice. Characters are cut out of the green with
+  ffmpeg, keyed on the colour sampled from the corners.
+- Results go to `cast.next.json`; `cast.json` changes only when the episode is committed.
+- `CHATCOM_E_PAINTER_UNAVAILABLE` (exit 4). llm-fallback re-vendored (image output, refusals as answers).
+
 ## 0.1.0.dev7 (2026-11-23)
 
 Any group chat, PR 7 of 7: the reader eval, docs and positioning.
