@@ -1,0 +1,242 @@
+{
+ "about": "Here is the data you requested. Remember: Telegram is ad free.",
+ "personal_information": {
+  "user_id": 9900001,
+  "first_name": "Test",
+  "last_name": "Operator",
+  "phone_number": "+1 555 010 0199",
+  "username": "@test_operator",
+  "bio": "synthetic fixture"
+ },
+ "contacts": {
+  "about": "contacts",
+  "list": [
+   {
+    "first_name": "Secret",
+    "last_name": "Contact",
+    "phone_number": "+1 555 010 0188",
+    "date": "2025-01-01T00:00:00"
+   }
+  ]
+ },
+ "chats": {
+  "about": "chats",
+  "list": [
+   {
+    "name": "Lake House Boys",
+    "type": "private_group",
+    "id": 4400123,
+    "messages": [
+     {
+      "id": 1,
+      "type": "service",
+      "date": "2026-01-09T18:59:00",
+      "date_unixtime": "1768003140",
+      "actor": "Dave",
+      "actor_id": "user1001",
+      "action": "create_group",
+      "title": "Lake House Boys",
+      "members": [
+       "Dave",
+       "Mike",
+       "Theo",
+       "Sam"
+      ],
+      "text": "",
+      "text_entities": []
+     },
+     {
+      "id": 2,
+      "type": "message",
+      "date": "2026-01-09T19:02:11",
+      "date_unixtime": "1768003331",
+      "from": "Dave",
+      "from_id": "user1001",
+      "text": "who is bringing the grill this year",
+      "text_entities": []
+     },
+     {
+      "id": 3,
+      "type": "message",
+      "date": "2026-01-09T19:03:00",
+      "date_unixtime": "1768003380",
+      "from": "Mike",
+      "from_id": "user1002",
+      "text": [
+       "not me, ",
+       {
+        "type": "bold",
+        "text": "I brought it"
+       },
+       " last year"
+      ],
+      "text_entities": [],
+      "reactions": [
+       {
+        "type": "emoji",
+        "count": 3,
+        "emoji": "😂",
+        "recent": [
+         {
+          "from": "Theo",
+          "from_id": "user1003",
+          "date": "2026-01-09T19:03:30"
+         }
+        ]
+       }
+      ]
+     },
+     {
+      "id": 4,
+      "type": "message",
+      "date": "2026-01-09T19:05:02",
+      "date_unixtime": "1768003502",
+      "from": "Theo",
+      "from_id": "user1003",
+      "text": "found the receipt",
+      "text_entities": [],
+      "photo": "photos/photo_1@09-01-2026_19-05-02.jpg",
+      "width": 800,
+      "height": 600
+     },
+     {
+      "id": 5,
+      "type": "message",
+      "date": "2026-01-09T19:07:40",
+      "date_unixtime": "1768003660",
+      "from": "Sam",
+      "from_id": "user1004",
+      "text": "the receipt says Mike",
+      "text_entities": [],
+      "reply_to_message_id": 3
+     },
+     {
+      "id": 6,
+      "type": "message",
+      "date": "2026-01-09T19:08:01",
+      "date_unixtime": "1768003681",
+      "from": "Mike",
+      "from_id": "user1002",
+      "text": "",
+      "text_entities": [],
+      "file": "stickers/sticker.webp",
+      "media_type": "sticker",
+      "sticker_emoji": "🙃"
+     },
+     {
+      "id": 7,
+      "type": "message",
+      "date": "2026-01-09T19:09:00",
+      "date_unixtime": "1768003740",
+      "from": "Dave",
+      "from_id": "user1001",
+      "text": [
+       "call me at ",
+       {
+        "type": "phone",
+        "text": "+1 (555) 010-4477"
+       },
+       " if the dock floods"
+      ],
+      "text_entities": [],
+      "edited": "2026-01-09T19:10:00",
+      "edited_unixtime": "0"
+     },
+     {
+      "id": 8,
+      "type": "message",
+      "date": "2026-01-09T19:10:00",
+      "date_unixtime": "1768003800",
+      "from": "Theo",
+      "from_id": "user1003",
+      "text": "",
+      "text_entities": [],
+      "poll": {
+       "question": "Grill or no grill?",
+       "closed": false,
+       "total_voters": 3,
+       "answers": []
+      }
+     },
+     {
+      "id": 9,
+      "type": "message",
+      "date": "2026-01-09T19:11:00",
+      "date_unixtime": "1768003860",
+      "from": null,
+      "from_id": "user0",
+      "text": "an old message from a deleted account",
+      "text_entities": []
+     },
+     {
+      "id": 10,
+      "type": "message",
+      "date": "2026-01-09T19:12:00",
+      "date_unixtime": "1768003920",
+      "from": "Sam",
+      "from_id": "user1004",
+      "text": "",
+      "text_entities": [],
+      "file": "voice_messages/audio_1.ogg",
+      "media_type": "voice_message",
+      "duration_seconds": 4
+     },
+     {
+      "id": 11,
+      "type": "service",
+      "date": "2026-01-09T19:13:00",
+      "date_unixtime": "1768003980",
+      "actor": "Sam",
+      "actor_id": "user1004",
+      "action": "pin_message",
+      "message_id": 2,
+      "text": "",
+      "text_entities": []
+     },
+     {
+      "id": 12,
+      "type": "message",
+      "date": "2026-01-09T19:14:30",
+      "date_unixtime": "1768004070",
+      "from": "Mike",
+      "from_id": "user1002",
+      "text": "same time next week?",
+      "text_entities": [],
+      "forwarded_from": "Lake News"
+     }
+    ]
+   },
+   {
+    "name": "Book Club",
+    "type": "private_supergroup",
+    "id": 4400777,
+    "messages": [
+     {
+      "id": 1,
+      "type": "message",
+      "date": "2026-01-09T09:00:00",
+      "date_unixtime": "1767967200",
+      "from": "Ana",
+      "from_id": "user9",
+      "text": "chapter 3 by friday",
+      "text_entities": []
+     },
+     {
+      "id": 2,
+      "type": "message",
+      "date": "2026-01-09T09:01:00",
+      "date_unixtime": "1767967260",
+      "from": "Bo",
+      "from_id": "user9",
+      "text": "ok",
+      "text_entities": []
+     }
+    ]
+   }
+  ]
+ },
+ "left_chats": {
+  "about": "left",
+  "list": []
+ }
+}
