@@ -10,4 +10,8 @@ Every run that sends anything prints this first and waits for a yes.
 
 **On disk:** everything lives in `CHATCOM_HOME` (default `~/.chatcom/`, mode 0700), outside any git checkout. CHATCOM never uploads a chat or hosts one.
 
+**What the skill may read:** in skill mode the agent types the commands. `chatcom ingest` in skill mode and `chatcom episode --dry-run` without a terminal read only the export you gave `chatcom new` or a file in the show's inbox (`~/.chatcom/<show>/inbox/`). Save a new week's export there. A text file is read as a chat only when it is a real export or starts with a `# source:` header. The other commands that read an export (`chatcom new`, and `chatcom episode` with another writer) do not check the path: they send nothing until someone passes `--accept-data-flow` after reading the notice, so that flag is the boundary. Read the notice before you say yes.
+
+**Ids and labels:** each show has a random secret (`~/.chatcom/<show>/secret`, mode 0600). Message ids, the "where the last episode ended" marker and the `Unnamed` labels are keyed hashes made with it, so no phone number can be worked back out of them.
+
 You are responsible for what you upload. In a group you do not trust, prefer CLI mode: the chat then never enters an agent session that can run commands.

@@ -1,10 +1,12 @@
 """Which messages an episode covers, and where the next one starts.
 
 Episode 1 covers the last 7 days of the export (counted back from its last
-message), or --since/--until. Every later episode starts right after the
-cursor (the exact last message used last time) and is capped at 14 days;
-older unread messages are skipped and the gap is logged. Messages are
-de-duplicated by id, so overlapping exports are safe."""
+message), or --since/--until. Every later episode starts where
+core.resume.resume_point says and is capped at 14 days; older unread messages
+are skipped and the gap is logged. Rows with no real time (`day` or `order`
+precision, from screenshots or a transcript without dates) have no day rules:
+with no match the whole import is the window. Messages are de-duplicated by
+id, so overlapping exports are safe."""
 from __future__ import annotations
 
 import re
@@ -12,7 +14,8 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 
 from chatcom.core.errors import ChatcomError
-from chatcom.core.messages import utc_minute
+from chatcom.core.messages import TIMED
+from chatcom.core.resume import make_cursor, resume_point
 
 FIRST_EPISODE_DAYS = 7
 MAX_DAYS = 14
@@ -26,6 +29,8 @@ class Window:
     cursor: dict
     gap: dict | None
     excluded: int
+    method: str = "first"
+    warning: dict | None = None
 
     def log_entry(self) -> dict:
         return {"from": self.start.isoformat(timespec="seconds"), "to": self.end.isoformat(timespec="seconds"),
@@ -68,30 +73,50 @@ def apply_exclusions(messages: list[dict], exclude: list[str],
         text = m["text"]
         for p in pats:
             text = p.sub("@[someone]", text)
-        out.append(m if text == m["text"] else {**m, "text": text})
+        quote = m.get("quote")
+        if quote and (quote.get("sender") or "").casefold() in names:
+            quote = None  # a quoted reply by an excluded person goes too
+        if text == m["text"] and quote is m.get("quote"):
+            out.append(m)
+        else:
+            out.append({**m, "text": text, "quote": quote})
     return out, dropped
+
+
+def _timed(msgs: list[dict]) -> bool:
+    return all(m.get("time_precision", "minute") in TIMED for m in msgs)
 
 
 def select(messages: list[dict], previous_cursor: dict | None, *, since: datetime | None = None,
            until: datetime | None = None, max_days: int = MAX_DAYS, bottle: bool = False,
-           exclude: list[str] | None = None, aliases: dict[str, list[str]] | None = None) -> Window:
+           exclude: list[str] | None = None, aliases: dict[str, list[str]] | None = None,
+           key: bytes | None = None, adapter: str = "whatsapp") -> Window:
     msgs = dedupe(messages)
     if not msgs:
-        raise ChatcomError("CHATCOM_E_EMPTY_EXPORT", "the export holds no messages",
-                           "Export the chat again from WhatsApp (More, Export chat, Without media).")
+        raise ChatcomError("CHATCOM_E_EMPTY_EXPORT", "the import holds no messages",
+                           "Export the chat again (docs/whatsapp-export.md), or check the screenshots or transcript.")
+    timed = _timed(msgs)
+    if (since or until) and not timed:
+        raise ChatcomError("CHATCOM_E_USAGE", "--since and --until need real dates; this import has none",
+                           "Leave them out: an import without dates is read whole, from where the last episode ended.")
     if until:
         msgs = [m for m in msgs if _t(m) <= until]
+    method, warning = "first", None
     if previous_cursor is None:
-        last = _t(msgs[-1]) if msgs else until
-        start = since or (last - timedelta(days=FIRST_EPISODE_DAYS))
-        new = [m for m in msgs if _t(m) >= start]
+        if timed:
+            last = _t(msgs[-1]) if msgs else until
+            start = since or (last - timedelta(days=FIRST_EPISODE_DAYS))
+            new = [m for m in msgs if _t(m) >= start]
+        else:
+            new = msgs
         gap = None
     else:
-        new = _after_cursor(msgs, previous_cursor)
+        r = resume_point(previous_cursor, msgs, key, adapter)
+        new, method, warning = r.rows, r.method, r.warning
         if since:
             new = [m for m in new if _t(m) >= since]
         gap = None
-        if new:
+        if new and timed:
             cap_start = _t(new[-1]) - timedelta(days=max_days)
             older = [m for m in new if _t(m) < cap_start]
             if older:
@@ -118,13 +143,5 @@ def select(messages: list[dict], previous_cursor: dict | None, *, since: datetim
     # The cursor is the last message read, excluded or not, so an excluded
     # person's lines are never re-read next week.
     end_msg = pre[-1]
-    cursor = {"minute": utc_minute(_t(end_msg)), "hash": end_msg["id"]}
-    return Window(new, _t(new[0]), _t(end_msg), cursor, gap, excluded)
-
-
-def _after_cursor(msgs: list[dict], cursor: dict) -> list[dict]:
-    for i, m in enumerate(msgs):
-        if m["id"] == cursor["hash"]:
-            return msgs[i + 1:]
-    # The exact message is gone (a different export range): resume after its minute.
-    return [m for m in msgs if utc_minute(_t(m)) > cursor["minute"]]
+    cursor = make_cursor(pre, adapter, key)
+    return Window(new, _t(new[0]), _t(end_msg), cursor, gap, excluded, method, warning)

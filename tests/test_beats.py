@@ -100,7 +100,7 @@ def test_bottle_rules(beats_s01e01, ctx):
     assert "$.bottle" in paths(beats_ops.validate(beats_s01e01, bible=b, cast_sheet=sheet, new_messages=0))
     b1 = bible_ops.apply_beats(b, beats_s01e01, window_entry={
         "from": "2026-01-01T00:00:00+00:00", "to": "2026-01-02T00:00:00+00:00",
-        "cursor": {"minute": "2026-01-02T00:00Z", "hash": "a" * 16}, "message_count": 5, "gap": None},
+        "cursor": {"minute": "2026-01-02T00:00Z", "hash": "a" * 16, "adapter": "whatsapp", "precision": "minute", "signature": {"raw": [], "canonical": []}}, "message_count": 5, "gap": None},
         writer={"mode": "replay", "model": "replay", "attempts": 1})
     d = copy.deepcopy(beats_s01e01)
     d.update(episode="S01E02", show_title=None, bottle=True)
@@ -119,7 +119,7 @@ def test_repeated_joke_must_be_a_callback(beats_s01e01, ctx):
     b, sheet = ctx
     b1 = bible_ops.apply_beats(b, beats_s01e01, window_entry={
         "from": "2026-01-01T00:00:00+00:00", "to": "2026-01-02T00:00:00+00:00",
-        "cursor": {"minute": "2026-01-02T00:00Z", "hash": "a" * 16}, "message_count": 5, "gap": None},
+        "cursor": {"minute": "2026-01-02T00:00Z", "hash": "a" * 16, "adapter": "whatsapp", "precision": "minute", "signature": {"raw": [], "canonical": []}}, "message_count": 5, "gap": None},
         writer={"mode": "replay", "model": "replay", "attempts": 1})
     d = copy.deepcopy(beats_s01e01)
     d.update(episode="S01E02", show_title=None)

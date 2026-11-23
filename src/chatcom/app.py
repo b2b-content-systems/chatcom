@@ -3,13 +3,15 @@ pure core to the adapters (WhatsApp parser, show store, writers)."""
 from __future__ import annotations
 
 import json
+import re
 import shlex
 import sys
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
-from chatcom.adapters import store, whatsapp
+from chatcom.adapters import registry, store
+from chatcom.adapters.source import ParseResult
 from chatcom.adapters.writers.base import Writer, parse_json
 from chatcom.core import beats as beats_ops
 from chatcom.core import bible as bible_ops
@@ -38,20 +40,16 @@ def notice(mode: str, exclude: list[str]) -> str:
     return text
 
 
-@dataclass
-class Ingested:
-    show: store.Show
-    parse: whatsapp.ParseResult
-    display_name: str
-    unparsed_report: Path | None = None
-    warnings: list[str] = field(default_factory=list)
+def _exports(export) -> list[str]:
+    return [export] if isinstance(export, (str, Path)) else list(export)
 
 
-def _parse_export(export: str, tz: str, aliases: dict, max_unparsed: float, log: store.RunLog,
-                  show: store.Show | None) -> tuple[whatsapp.ParseResult, str]:
-    text, display = whatsapp.read_export(export)
-    res = whatsapp.parse(text, tz, aliases=aliases)
-    log.write(f"parsed {len(res.messages)} messages, {res.system_lines} system lines, "
+def _parse_export(export, tz: str, aliases: dict, max_unparsed: float, log: store.RunLog,
+                  show: store.Show | None, *, key: bytes | None, source: str | None = None,
+                  thread: str | None = None) -> tuple[ParseResult, str]:
+    ctx = registry.Context(tz=tz, aliases=aliases or {}, key=key, thread=thread)
+    res, display, adapter = registry.load(_exports(export), ctx, source)
+    log.write(f"source {adapter.name}: parsed {len(res.messages)} messages, {res.system_lines} system lines, "
               f"{len(res.unparsed)} unparsed ({res.unparsed_rate:.2%}), format {res.fmt}")
     if res.unparsed_rate > max_unparsed or not res.messages:
         report = (show.dir / "logs" if show and show.dir.exists() else store.home() / "logs")
@@ -61,12 +59,25 @@ def _parse_export(export: str, tz: str, aliases: dict, max_unparsed: float, log:
         raise ChatcomError(
             "CHATCOM_E_UNPARSED_LINES",
             f"{len(res.unparsed)} of {res.header_lines + len(res.unparsed)} message lines did not parse "
-            f"({res.unparsed_rate:.1%}, limit {max_unparsed:.0%}); detected {res.fmt['platform']} export, "
-            f"{res.fmt['date_order']} dates, {res.fmt['clock']} clock",
-            "Check the export is an unedited WhatsApp .txt or .zip (docs/whatsapp-export.md), or accept the rate "
+            f"({res.unparsed_rate:.1%}, limit {max_unparsed:.0%}); read as {res.describe()}",
+            "Check the export is unedited (docs/whatsapp-export.md, docs/transcript-format.md), or accept the rate "
             f"with --max-unparsed. The lines are listed in {path} (they were not printed).",
             context={"report": str(path), "format": res.fmt}, trace_path=str(log.path))
     return res, display
+
+
+def require_flow(st: dict, writer: str, setup: dict, slug: str) -> None:
+    """The writer mode must be the one accepted at ingest; otherwise exit 6 with
+    the notice for the new flow, so the operator sees what would change."""
+    try:
+        state_ops.require_flow(st, writer)
+    except ChatcomError as e:
+        text = notice(writer, setup.get("exclude", [])) if writer in NOTICE else e.what
+        nxt = (f"chatcom ingest {slug} --export <file> --accept-data-flow" if writer == "session"
+               else f"chatcom episode {slug} --export <file> --writer {writer} --accept-data-flow")
+        raise ChatcomError("CHATCOM_E_AWAITING_CONFIRMATION", f"{e.what}. New notice: {text}", e.fix,
+                           recovery="ask", context={**e.context, "mode": writer, "notice": text,
+                                                    "next_command": nxt}) from None
 
 
 def resolve_show(slug: str | None) -> store.Show:
@@ -101,11 +112,15 @@ def _match_member(name: str, senders: list[str]) -> str:
                        context={"closest": close})
 
 
-def new_show(export: str, setup: dict, *, tz: str, max_unparsed: float = MAX_UNPARSED) -> tuple[store.Show, dict]:
+def new_show(export, setup: dict, *, tz: str, max_unparsed: float = MAX_UNPARSED,
+             source: str | None = None, thread: str | None = None) -> tuple[store.Show, dict]:
     check("setup", setup, code="CHATCOM_E_SETUP_INVALID", what="setup is not valid",
           fix="Fix the field named, or print a template with `chatcom new --print-setup-template`.")
-    log = store.RunLog(None, f"new {Path(export).name}")
-    res, display = _parse_export(export, setup.get("timezone", tz), setup.get("aliases", {}), max_unparsed, log, None)
+    exports = _exports(export)
+    log = store.RunLog(None, f"new {Path(exports[0]).name}")
+    key = store.new_key()
+    res, display = _parse_export(exports, setup.get("timezone", tz), setup.get("aliases", {}), max_unparsed, log,
+                                 None, key=key, source=source, thread=thread)
     slug = setup.get("slug") or store.slugify(display)
     show = store.Show(slug)
     if show.exists():
@@ -118,7 +133,8 @@ def new_show(export: str, setup: dict, *, tz: str, max_unparsed: float = MAX_UNP
     no_cast = [_match_member(n, senders) for n in setup.get("no_cast", [])]
     no_photo = [_match_member(n, senders) for n in setup.get("no_photo", [])]
     photos = {_match_member(k, senders): v for k, v in setup.get("photos", {}).items()}
-    first = window_ops.select(res.messages, None, exclude=exclude, aliases=setup.get("aliases"))
+    first = window_ops.select(res.messages, None, exclude=exclude, aliases=setup.get("aliases"), key=key,
+                              adapter=res.adapter)
     counts = ranking_counts(first.messages)
     cast, chorus = bible_ops.pick_cast(counts, cast=cast_req, no_cast=no_cast, exclude=exclude)
     # Everyone in the export who is not cast or excluded is chorus, not only
@@ -132,11 +148,17 @@ def new_show(export: str, setup: dict, *, tz: str, max_unparsed: float = MAX_UNP
     sheet = bible_ops.new_cast_sheet(bible, photos)
     show.create_dirs()
     with show.lock():
-        store.write_json(show.setup_path, {**setup, "slug": slug, "exclude": exclude})
+        export_paths = [str(Path(e).expanduser().resolve()) for e in exports]
+        store.write_json(show.setup_path, {**setup, "slug": slug, "exclude": exclude, "export_paths": export_paths})
         store.write_json(show.cast_path, sheet)
         store.write_json(show.bible_path, bible)
+        # Last: a crash before here leaves no secret, and Show.key() names the repair.
+        if show.secret_path.is_file():
+            show.secret_path.unlink()  # an orphan from a run that died before bible.json
+        show.write_key(key)
     log.write(f"created show {slug}: cast {cast}, chorus {len(chorus)}")
-    return show, {"slug": slug, "cast": cast, "chorus": chorus, "masked": len(res.masked),
+    return show, {"slug": slug, "cast": cast, "chorus": chorus, "masked": len(res.masked), "source": res.adapter,
+                  "inbox": str(show.inbox),
                   "unparsed_rate": res.unparsed_rate,
                   "format": res.fmt, "messages": len(res.messages), "first_window": first.log_entry()}
 
@@ -163,23 +185,68 @@ def _aware(dt: datetime | None, tz: str) -> datetime | None:
     return dt.replace(tzinfo=ZoneInfo(tz))
 
 
-def ingest(show: store.Show, export: str, *, confirmed: bool, mode: str, since: datetime | None = None,
+MASKED_LABEL = re.compile(r"^Unnamed [0-9a-f]{6}$")
+
+
+def check_exclusions_match(show: store.Show, setup: dict, res: ParseResult) -> None:
+    """Fail closed: an excluded phone label that matches no one in this export
+    would silently stop excluding that person. Labels are keyed by the show's
+    secret, so they change after migrate or a new secret."""
+    senders = set(res.senders())
+    stale = [e for e in setup.get("exclude", []) if MASKED_LABEL.match(e) and e not in senders]
+    if stale:
+        current = sorted(s for s in senders if MASKED_LABEL.match(s))
+        raise ChatcomError("CHATCOM_E_SETUP_INVALID",
+                           f"setup.json excludes {', '.join(stale)}, which matches no sender in this export "
+                           "(phone labels change when a show gets a new secret, for example after migrate)",
+                           f"Nothing was sent. In {show.setup_path}, replace it under \"exclude\" with the label this "
+                           f"export uses ({', '.join(current) or 'none here'}), add an alias for the number, or remove "
+                           "it if that person has left the chat.",
+                           context={"stale": stale, "current_labels": current})
+
+
+def check_session_paths(show: store.Show, setup: dict, exports: list[str]) -> None:
+    """In session mode the agent, not the operator, types the --export path. It
+    may read only the export given at `new` or a file in the show's inbox, so
+    an injected command cannot hand some other file to the model."""
+    allowed = {str(Path(p)) for p in setup.get("export_paths", [])}
+    inbox = show.inbox.resolve()
+    for e in exports:
+        p = Path(e).expanduser().resolve()
+        if str(p) in allowed or p == inbox or inbox in p.parents:
+            continue
+        raise ChatcomError("CHATCOM_E_EXPORT_OUTSIDE_INBOX",
+                           f"in skill mode chatcom reads only the export given at `new` or files in {show.inbox}; "
+                           f"{p.name} is elsewhere",
+                           f"Ask the operator to move the new export into {show.inbox}, then pass that path.",
+                           recovery="ask", context={"inbox": str(show.inbox), "path": str(p)})
+
+
+def ingest(show: store.Show, export, *, accepted: bool, mode: str, since: datetime | None = None,
            until: datetime | None = None, bottle: bool = False, max_days: int = window_ops.MAX_DAYS,
-           max_unparsed: float = MAX_UNPARSED) -> tuple[Path, window_ops.Window, dict]:
+           max_unparsed: float = MAX_UNPARSED, source: str | None = None,
+           thread: str | None = None) -> tuple[Path, window_ops.Window, dict]:
     bible, sheet, setup = _load(show)
     exclude = setup.get("exclude", [])
-    if not confirmed:
+    exports = _exports(export)
+    if mode == "session":
+        check_session_paths(show, setup, exports)
+    if not accepted:
         raise ChatcomError("CHATCOM_E_AWAITING_CONFIRMATION", notice(mode, exclude),
-                           "Ask the operator. If they agree, run the same command with --confirmed.",
-                           recovery="ask", context={"mode": mode})
-    log = store.RunLog(show, f"ingest {Path(export).name}")
+                           "Ask the operator. If they agree, run the same command with --accept-data-flow.",
+                           recovery="ask", context={"mode": mode, "notice": notice(mode, exclude)})
+    log = store.RunLog(show, f"ingest {Path(exports[0]).name}")
     with show.lock():
         bible, sheet, setup = _load(show)  # re-read under the lock
         tz = bible["show"]["timezone"]
-        res, _ = _parse_export(export, tz, setup.get("aliases", {}), max_unparsed, log, show)
+        key = show.key()
+        res, _ = _parse_export(exports, tz, setup.get("aliases", {}), max_unparsed, log, show, key=key,
+                               source=source, thread=thread)
+        check_exclusions_match(show, setup, res)
         win = window_ops.select(res.messages, bible_ops.last_cursor(bible), since=_aware(since, tz),
                                 until=_aware(until, tz), max_days=max_days, bottle=bottle,
-                                exclude=setup.get("exclude", []), aliases=setup.get("aliases"))
+                                exclude=setup.get("exclude", []), aliases=setup.get("aliases"),
+                                key=key, adapter=res.adapter)
         code = bible_ops.current_code(bible)
         sp = show.state_path(code)
         if sp.exists():
@@ -194,10 +261,12 @@ def ingest(show: store.Show, export: str, *, confirmed: bool, mode: str, since: 
         st = state_ops.new(code, win.log_entry(), mode, store.now())
         st["bottle_requested"] = bottle
         st["unparsed_rate"] = round(res.unparsed_rate, 4)
+        st["source"] = res.adapter
+        st["resume"] = {"method": win.method, "warning": win.warning}
         ep = show.episode_dir(code)
         store.write_jsonl(ep / "messages.jsonl", win.messages)
         store.write_json(sp, st)
-        log.write(f"{code}: window {win.log_entry()} excluded {win.excluded}")
+        log.write(f"{code}: window {win.log_entry()} excluded {win.excluded} resume {win.method}")
     return ep / "messages.jsonl", win, st
 
 
@@ -219,10 +288,12 @@ def write_prep(show: store.Show, *, token_budget: int = ranking.DEFAULT_TOKEN_BU
 
 
 def _write_prep_locked(show: store.Show, token_budget: int) -> Path:
-    bible, sheet, _ = _load(show)
+    bible, sheet, setup = _load(show)
     code, st = _current_state(show, bible)
     state_ops.require(st, "ingested")
-    state_ops.check_attempts_left(st)
+    require_flow(st, "session", setup, show.slug)
+    st = state_ops.start_cycle(st, store.now())
+    store.write_json(show.state_path(code), st)
     ep = show.episode_dir(code)
     msgs = store.read_jsonl(ep / "messages.jsonl")
     b = bundle_ops.build(bible, sheet, msgs, token_budget=token_budget)
@@ -239,6 +310,7 @@ def _write_prep_locked(show: store.Show, token_budget: int) -> Path:
         "write_to": str(wdir / "beats.json"),
         "submit": f"chatcom write-submit {show.slug} --file {shlex.quote(str(wdir / 'beats.json'))} --model <your model name>",
         "attempts_used": st["attempts"],
+        "prep_cycle": st["prep_cycles"],
         "last_errors": st["last_errors"],
     })
     return wdir / "bundle.json"
@@ -250,9 +322,10 @@ def submit(show: store.Show, beats_doc, *, model: str, mode: str, draft_path: Pa
     errors are raised (exit 2), or exit 4 on the third failure."""
     log = store.RunLog(show, f"write-submit mode={mode} model={model}")
     with show.lock():
-        bible, sheet, _ = _load(show)  # read under the lock: a concurrent submit cannot be lost
+        bible, sheet, setup = _load(show)  # read under the lock: a concurrent submit cannot be lost
         code, st = _current_state(show, bible)
         state_ops.require(st, "ingested")
+        require_flow(st, mode, setup, show.slug)
         state_ops.check_attempts_left(st, str(draft_path) if draft_path else None)
         new_msgs = st["window"]["message_count"]
         extra = bible_ops.new_speakers(bible, store.read_jsonl(show.episode_dir(code) / "messages.jsonl"))
@@ -284,13 +357,26 @@ def submit(show: store.Show, beats_doc, *, model: str, mode: str, draft_path: Pa
             "attempts": st["attempts"], "model": model}
 
 
+def status(show: store.Show) -> dict:
+    bible, _, setup = _load(show)
+    code = bible_ops.current_code(bible)
+    sp = show.state_path(code)
+    st = store.read_json(sp) if sp.exists() else None
+    return {"show": show.slug, "episode": code, "stage": st["stage"] if st else "not started",
+            "attempts": st["attempts"] if st else 0, "prep_cycles": st.get("prep_cycles", 0) if st else 0,
+            "writer_mode": st.get("writer_mode") if st else None, "source": st.get("source") if st else None,
+            "resume": st.get("resume") if st else None, "lock": show.lock_holder(),
+            "next": state_ops.next_command(st, show.slug)}
+
+
 def run_writer(show: store.Show, writer: Writer, *, token_budget: int = ranking.DEFAULT_TOKEN_BUDGET,
                say=lambda s: print(s, file=sys.stderr)) -> dict:
     """CLI and replay modes: prompt, validate, re-prompt with the errors, at
     most three attempts in all."""
-    bible, sheet, _ = _load(show)
+    bible, sheet, setup = _load(show)
     code, st = _current_state(show, bible)
     state_ops.require(st, "ingested")
+    require_flow(st, writer.mode, setup, show.slug)
     ep = show.episode_dir(code)
     b = bundle_ops.build(bible, sheet, store.read_jsonl(ep / "messages.jsonl"), token_budget=token_budget)
     system = bundle_ops.brief()
@@ -314,22 +400,32 @@ def run_writer(show: store.Show, writer: Writer, *, token_budget: int = ranking.
             st = store.read_json(show.state_path(code))
 
 
-def dry_run(show: store.Show, export: str, *, since=None, until=None, bottle=False,
+def dry_run(show: store.Show, export, *, since=None, until=None, bottle=False,
             max_days: int = window_ops.MAX_DAYS, max_unparsed: float = MAX_UNPARSED,
-            token_budget: int = ranking.DEFAULT_TOKEN_BUDGET) -> dict:
-    """What an episode would read and send, with no model call and no writes."""
+            token_budget: int = ranking.DEFAULT_TOKEN_BUDGET, source: str | None = None,
+            thread: str | None = None, operator_typed: bool = True) -> dict:
+    """What an episode would read and send, with no model call and no writes.
+    A dry run asks for no consent, so when an agent may have typed it (no TTY)
+    it reads only the inbox and the export given at `new`."""
     bible, sheet, setup = _load(show)
-    log = store.RunLog(show, f"episode --dry-run {Path(export).name}")
-    res, _ = _parse_export(export, bible["show"]["timezone"], setup.get("aliases", {}), max_unparsed, log, show)
+    exports = _exports(export)
+    if not operator_typed:
+        check_session_paths(show, setup, exports)
+    log = store.RunLog(show, f"episode --dry-run {Path(exports[0]).name}")
+    key = show.key()
+    res, _ = _parse_export(exports, bible["show"]["timezone"], setup.get("aliases", {}), max_unparsed, log, show,
+                           key=key, source=source, thread=thread)
     tz = bible["show"]["timezone"]
     win = window_ops.select(res.messages, bible_ops.last_cursor(bible), since=_aware(since, tz),
                             until=_aware(until, tz), max_days=max_days, bottle=bottle,
-                            exclude=setup.get("exclude", []), aliases=setup.get("aliases"))
+                            exclude=setup.get("exclude", []), aliases=setup.get("aliases"),
+                            key=key, adapter=res.adapter)
     b = bundle_ops.build(bible, sheet, win.messages, token_budget=token_budget)
     prompt_tokens = len(bundle_ops.render_prompt(b)) // 4 + len(bundle_ops.brief()) // 4
     return {"episode": b["episode"], "window": win.log_entry(), "excluded_messages": win.excluded,
             "sampling": b["sampling"], "writer_input_tokens_estimate": prompt_tokens,
             "image_calls_planned": "0 now; new locations are known after the writer (at most 2)",
+            "source": res.adapter, "resume": win.method, "warning": win.warning,
             "format": res.fmt, "unparsed_rate": round(res.unparsed_rate, 4)}
 
 
@@ -377,3 +473,98 @@ def show_list() -> list[dict]:
         out.append({"slug": slug, "title": b["show"]["title"], "next": bible_ops.current_code(b),
                     "cast": len(b["cast"])})
     return out
+
+
+# ---- migrate ----------------------------------------------------------------
+
+def _upgrade_message(m: dict) -> dict:
+    m = dict(m)
+    m.setdefault("time_precision", "minute")
+    m.setdefault("quote", None)
+    src = dict(m.get("source") or {"adapter": "whatsapp"})
+    src.setdefault("label", m["sender"])
+    m["source"] = src
+    if m.get("reactions"):
+        m["reactions"] = [{"emoji": r["emoji"], "sender": r.get("sender"), "count": r.get("count", 1)}
+                          for r in m["reactions"]]
+    return m
+
+
+def _upgrade_cursor(cursor: dict, msgs: list[dict], key: bytes) -> dict:
+    """A v1 cursor gets an empty signature: stored rows carry v1 labels and
+    masking, so a signature built from them would not match a v2 parse. An
+    empty signature makes resume keep the v1 rule (skip the cursor minute)."""
+    if "signature" in cursor:
+        return cursor
+    return {**cursor, "adapter": "whatsapp", "precision": "minute", "signature": {"raw": [], "canonical": []}}
+
+
+def migrate(slug: str | None) -> dict:
+    """v1 -> v2. Backs up the show, adds the v2 fields to stored message files,
+    rebuilds cursor signatures from them, and writes bible.json last: a kill
+    part way leaves a v1 bible, and migrate runs again."""
+    from chatcom import SCHEMA_VERSION
+    if not slug:
+        shows = store.list_shows()
+        if len(shows) != 1:
+            raise ChatcomError("CHATCOM_E_SHOW_AMBIGUOUS" if shows else "CHATCOM_E_SHOW_NOT_FOUND",
+                               "name the show to migrate", "Run `chatcom migrate <slug>`.", context={"shows": shows})
+        slug = shows[0]
+    show = store.Show(slug)
+    if not show.exists():
+        raise ChatcomError("CHATCOM_E_SHOW_NOT_FOUND", f"no show '{slug}' in {store.home()}", "Run `chatcom shows`.")
+    raw = store.read_json(show.bible_path)
+    v = raw.get("schema_version")
+    if v == SCHEMA_VERSION:
+        if not show.secret_path.is_file():
+            # A lost secret: a new one keeps the show usable. Old ids no longer
+            # match, so the next episode resumes by time or by alignment.
+            with show.lock():
+                show.write_key(store.new_key())
+            return {"show": slug, "from": v, "to": v, "changed": True, "new_secret": True}
+        return {"show": slug, "from": v, "to": v, "changed": False}
+    if v != 1:
+        bible_ops.validate(raw)  # raises the newer-schema or invalid error
+    with show.lock():
+        stamp = store.now().replace(":", "").replace("-", "")
+        backup = show.dir / "snapshots" / f"migrate-v1-{stamp}"
+        for name in ("bible.json", "cast.json", "setup.json"):
+            src = show.dir / name
+            if src.is_file():
+                store.write_atomic(backup / name, src.read_bytes())
+        if not show.secret_path.is_file():
+            show.write_key(store.new_key())
+        key = show.key()
+        show.create_dirs()  # v1 shows have no inbox/ folder
+        stored: dict[str, list[dict]] = {}
+        for f in sorted(show.dir.glob("episodes/*/messages.jsonl")):
+            rows = [_upgrade_message(m) for m in store.read_jsonl(f)]
+            for m in rows:
+                check("message", m, code="CHATCOM_E_BIBLE_INVALID", what=f"{f} has a message chatcom cannot upgrade",
+                      fix=f"Restore the backup in {backup} and report this.")
+            store.write_jsonl(f, rows)
+            stored[f.parent.name] = rows
+        for sp in sorted(show.dir.glob("episodes/*/state.json")):
+            st = store.read_json(sp)
+            st.setdefault("prep_cycles", 0)
+            st.setdefault("accepted_flow", {"writer": st.get("writer_mode"), "reader": None})
+            if st.get("window", {}).get("cursor"):
+                st["window"]["cursor"] = _upgrade_cursor(st["window"]["cursor"], stored.get(sp.parent.name, []), key)
+            store.write_json(sp, st)
+        for bp in sorted(show.dir.glob("episodes/*/bible.next.json")):
+            nxt = store.read_json(bp)
+            nxt["schema_version"] = SCHEMA_VERSION
+            for ep in nxt.get("episodes", []):
+                ep["window"]["cursor"] = _upgrade_cursor(ep["window"]["cursor"], stored.get(ep["code"], []), key)
+            store.write_json(bp, nxt)
+        sheet = store.read_json(show.cast_path)
+        sheet["schema_version"] = SCHEMA_VERSION
+        check("cast", sheet, code="CHATCOM_E_BIBLE_INVALID", what="cast.json did not upgrade",
+              fix=f"Restore the backup in {backup} and report this.")
+        for ep in raw.get("episodes", []):
+            ep["window"]["cursor"] = _upgrade_cursor(ep["window"]["cursor"], stored.get(ep["code"], []), key)
+        raw["schema_version"] = SCHEMA_VERSION
+        bible_ops.validate(raw)
+        store.write_json(show.cast_path, sheet)
+        store.write_json(show.bible_path, raw)  # last: the marker that migrate finished
+    return {"show": slug, "from": 1, "to": SCHEMA_VERSION, "changed": True, "backup": str(backup)}

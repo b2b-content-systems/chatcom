@@ -41,10 +41,18 @@ def test_unknown_key_is_an_error_and_underscore_is_a_comment():
 
 def test_newer_schema_is_refused_with_migrate_hint():
     b = _bible()
-    b["schema_version"] = 2
+    b["schema_version"] = 3
     with pytest.raises(ChatcomError) as e:
         bible_ops.validate(b)
     assert e.value.code == "CHATCOM_E_SCHEMA_NEWER"
+
+
+def test_older_schema_is_refused_naming_migrate():
+    b = _bible()
+    b["schema_version"] = 1
+    with pytest.raises(ChatcomError) as e:
+        bible_ops.validate(b)
+    assert e.value.code == "CHATCOM_E_SCHEMA_OLD" and "chatcom migrate" in e.value.fix
 
 
 def test_hand_edit_errors_name_the_path():

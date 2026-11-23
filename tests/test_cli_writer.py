@@ -35,7 +35,7 @@ def test_skill_mode_sequence(capsys, chatcom_home, beats_s01e01, not_a_tty):
     # step 1 never exposes messages: notice only, exit 6
     code, out, err = run(capsys, "ingest", "lake-house", "--export", str(LAKE))
     assert code == 6 and "CHATCOM_E_AWAITING_CONFIRMATION" in err and "ok it is happening" not in out + err
-    code, out, _ = run(capsys, "ingest", "lake-house", "--export", str(LAKE), "--confirmed")
+    code, out, _ = run(capsys, "ingest", "lake-house", "--export", str(LAKE), "--accept-data-flow")
     assert code == 0 and out.strip().endswith("messages.jsonl")
     code, out, _ = run(capsys, "write-prep", "lake-house")
     bundle_path = out.strip().splitlines()[-1]
@@ -72,13 +72,14 @@ def test_skill_mode_sequence(capsys, chatcom_home, beats_s01e01, not_a_tty):
 
 def test_third_failed_attempt_exits_4(capsys, chatcom_home, beats_s01e01, not_a_tty):
     new_lake(capsys)
-    run(capsys, "ingest", "lake-house", "--export", str(LAKE), "--confirmed")
+    run(capsys, "ingest", "lake-house", "--export", str(LAKE), "--accept-data-flow")
     bad = chatcom_home / "bad.json"
     bad.write_text("{not json")
     codes = [run(capsys, "write-submit", "lake-house", "--file", str(bad), "--model", "m")[0] for _ in range(3)]
     assert codes == [2, 2, 4]
     code, _, err = run(capsys, "write-submit", "lake-house", "--file", str(bad), "--model", "m")
-    assert code == 4 and "Writer step did not complete. Nothing was saved." in err
+    assert code == 4 and "Writer step did not complete. No bible change. Draft kept at" in err
+    assert "Ask the operator before switching modes" in err and "--writer anthropic" not in err
 
 
 def test_new_without_terminal_or_operator_exits_2(capsys, not_a_tty):
@@ -113,13 +114,14 @@ def test_episode_with_replay_writer_retries_with_feedback(capsys, chatcom_home, 
     code, out, err = run(capsys, "episode", "lake-house", "--export", str(LAKE), "--writer", "replay", "--replay", str(rec))
     assert code == 0, err
     assert "recorded-claude answered" in err and "draft 1 failed validation" in err
-    assert "drafted by recorded-claude in 2 attempt(s)" in out and out.strip().endswith("beats.json")
+    assert "drafted by recorded-claude in 2 attempt(s) (source whatsapp, resumed by first)" in out
+    assert out.strip().endswith("beats.json")
 
 
 def test_anthropic_episode_needs_consent_without_terminal(capsys, not_a_tty):
     new_lake(capsys)
     code, _, err = run(capsys, "episode", "lake-house", "--export", str(LAKE))
-    assert code == 2 and "--accept-data-flow" in err
+    assert code == 6 and "CHATCOM_E_AWAITING_CONFIRMATION" in err and "--accept-data-flow" in err
 
 
 def test_dry_run_makes_no_call_and_no_files(capsys, chatcom_home, not_a_tty):
@@ -199,3 +201,59 @@ def test_injection_strings_stay_inside_the_data_block(lake_show):
     for t in ("rm -rf", "id_rsa", "pwned"):
         assert t in inside and t not in prompt.replace(inside, "")
     assert "rm -rf" not in bundle_ops.brief()
+
+
+def test_a_new_write_prep_starts_a_new_cycle_up_to_three(capsys, chatcom_home, not_a_tty):
+    new_lake(capsys)
+    run(capsys, "ingest", "lake-house", "--export", str(LAKE), "--accept-data-flow")
+    bad = chatcom_home / "bad.json"
+    bad.write_text("{not json")
+    for cycle in range(3):
+        assert run(capsys, "write-prep", "lake-house")[0] == 0
+        assert run(capsys, "write-prep", "lake-house")[0] == 0  # a repeat with no submit is the same cycle
+        codes = [run(capsys, "write-submit", "lake-house", "--file", str(bad), "--model", "m")[0] for _ in range(3)]
+        assert codes == [2, 2, 4], cycle
+    code, _, err = run(capsys, "write-prep", "lake-house")
+    assert code == 4 and "prep cycle 3 of 3" in err
+    code, out, _ = run(capsys, "--json", "status", "lake-house")
+    st = json.loads(out)
+    assert code == 0 and st["prep_cycles"] == 3 and st["stage"] == "ingested"
+
+
+def test_session_acceptance_does_not_cover_cli_mode(capsys, chatcom_home, not_a_tty):
+    from chatcom import app
+    from chatcom.adapters.writers.replay import ReplayWriter
+    new_lake(capsys)
+    run(capsys, "ingest", "lake-house", "--export", str(LAKE), "--accept-data-flow")
+    show = app.resolve_show("lake-house")
+
+    class Cli(ReplayWriter):
+        mode = "anthropic"
+    rec = chatcom_home / "r.json"
+    rec.write_text(json.dumps({"model": "m", "responses": [{}]}))
+    with pytest.raises(ChatcomError) as e:
+        app.run_writer(show, Cli(str(rec)))
+    assert e.value.code == "CHATCOM_E_AWAITING_CONFIRMATION" and e.value.exit_code == 6
+    assert "New notice:" in e.value.what and "Anthropic" in e.value.context["notice"]
+    # The JSON next command must parse: it names the ingest/episode that re-accepts, never a flag a command lacks.
+    import shlex
+    nxt = e.value.context["next_command"]
+    cli.build_parser().parse_args(shlex.split(nxt.replace("<file>", "x.zip"))[1:])
+
+
+def test_ingest_notice_under_json_names_the_next_command(capsys, not_a_tty):
+    new_lake(capsys)
+    code, out, err = run(capsys, "--json", "ingest", "lake-house", "--export", str(LAKE))
+    note = json.loads(out)
+    assert code == 6 and note["data_flow"] == "session" and note["next_command"].endswith("--accept-data-flow")
+    assert "model provider" in note["notice_text"] and json.loads(err)["code"] == "CHATCOM_E_AWAITING_CONFIRMATION"
+
+
+def test_json_next_command_quotes_paths_with_spaces(capsys, chatcom_home, not_a_tty):
+    import shlex
+    new_lake(capsys)
+    spaced = chatcom_home / "lake-house" / "inbox" / "WhatsApp Chat with Lake House.txt"
+    spaced.write_bytes(LAKE.read_bytes())
+    code, out, _ = run(capsys, "--json", "ingest", "lake-house", "--export", str(spaced))
+    nxt = json.loads(out)["next_command"]
+    assert code == 6 and shlex.split(nxt)[shlex.split(nxt).index("--export") + 1] == str(spaced)

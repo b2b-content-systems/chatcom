@@ -84,7 +84,7 @@ def test_excluded_member_never_reaches_messages_file(capsys, chatcom_home, tmp_p
     assert run(capsys, "new", str(LAKE), "--setup", str(setup), "--tz", TZ, "--show", "lake-house")[0] == 0
     code, _, err = run(capsys, "ingest", "lake-house", "--export", str(LAKE))
     assert code == 6 and "Excluded before any model call: Sam" in err
-    run(capsys, "ingest", "lake-house", "--export", str(LAKE), "--confirmed")
+    run(capsys, "ingest", "lake-house", "--export", str(LAKE), "--accept-data-flow")
     rows = (chatcom_home / "lake-house" / "episodes" / "S01E01" / "messages.jsonl").read_text()
     assert '"sender": "Sam"' not in rows and "Priya" in rows
 
@@ -147,18 +147,18 @@ def test_slug_with_a_path_is_refused(capsys, not_a_tty):
 # Value: protects=a drafted episode is never overwritten by a re-ingest, and a re-ingest before drafting restarts attempts; fails_when=ingest overwrites state at drafted or keeps a spent attempt counter; why_new=app.ingest's stage check never ran; seam=none; no_claim=the future rewrite command
 def test_reingest_rules(capsys, chatcom_home, beats_s01e01, not_a_tty):
     run(capsys, "new", str(LAKE), "--operator", "Dave", "--tz", TZ, "--show", "lake-house")
-    run(capsys, "ingest", "lake-house", "--export", str(LAKE), "--confirmed")
+    run(capsys, "ingest", "lake-house", "--export", str(LAKE), "--accept-data-flow")
     bad = chatcom_home / "bad.json"
     bad.write_text("{}")
     run(capsys, "write-submit", "lake-house", "--file", str(bad), "--model", "m")
     sp = chatcom_home / "lake-house" / "episodes" / "S01E01" / "state.json"
     assert json.loads(sp.read_text())["attempts"] == 1
-    run(capsys, "ingest", "lake-house", "--export", str(LAKE), "--confirmed")
+    run(capsys, "ingest", "lake-house", "--export", str(LAKE), "--accept-data-flow")
     assert json.loads(sp.read_text())["attempts"] == 0
     good = chatcom_home / "good.json"
     good.write_text(json.dumps(beats_s01e01))
     assert run(capsys, "write-submit", "lake-house", "--file", str(good), "--model", "m")[0] == 0
-    code, _, err = run(capsys, "ingest", "lake-house", "--export", str(LAKE), "--confirmed")
+    code, _, err = run(capsys, "ingest", "lake-house", "--export", str(LAKE), "--accept-data-flow")
     assert code == 2 and "CHATCOM_E_STATE" in err and "already drafted" in err
 
 
@@ -231,6 +231,8 @@ def test_run_writer_gives_up_after_three_invalid_drafts(capsys, chatcom_home, tm
 # Value: protects=each operator mistake gets its code and exit 2, never a traceback; fails_when=a code or exit status changes; why_new=these branches never ran; seam=none; no_claim=fix-line wording
 def test_operator_errors(capsys, chatcom_home, tmp_path, not_a_tty):
     assert run(capsys, "new", str(LAKE), "--operator", "Dave", "--tz", TZ, "--show", "lake-house")[0] == 0
+    replay = tmp_path / "replay.json"
+    replay.write_text(json.dumps({"responses": [{}]}))
     cases = [
         (("new", str(LAKE), "--operator", "Dave", "--tz", TZ, "--show", "lake-house"), "CHATCOM_E_SHOW_EXISTS"),
         (("write-prep", "nope"), "CHATCOM_E_SHOW_NOT_FOUND"),
@@ -238,6 +240,13 @@ def test_operator_errors(capsys, chatcom_home, tmp_path, not_a_tty):
         (("episode", "lake-house", "--export", str(LAKE), "--writer", "session"), "CHATCOM_E_USAGE"),
         (("episode", "lake-house", "--export", str(LAKE), "--writer", "replay"), "CHATCOM_E_USAGE"),
         (("write-submit", "lake-house", "--file", str(tmp_path / "missing.json"), "--model", "m"), "CHATCOM_E_USAGE"),
+        # Coverage audit pass 2. Value: protects=a missing --export through the CLI is EXPORT_NOT_FOUND exit 2 for new
+        # and episode; fails_when=registry.expand stops checking and a later step crashes or says SOURCE_UNKNOWN;
+        # why_new=only whatsapp.read_export's own check is tested; seam=none; no_claim=session-mode ingest (the inbox rule runs first)
+        (("new", str(tmp_path / "missing.zip"), "--operator", "Dave", "--tz", TZ, "--show", "fresh"),
+         "CHATCOM_E_EXPORT_NOT_FOUND"),
+        (("episode", "lake-house", "--export", str(tmp_path / "gone"), "--writer", "replay", "--replay", str(replay)),
+         "CHATCOM_E_EXPORT_NOT_FOUND"),
     ]
     for argv, code_name in cases:
         code, _, err = run(capsys, *argv)
@@ -336,7 +345,7 @@ def test_quiet_and_new_members_speak_as_chorus(beats_s01e01):
     d["scenes"][2]["bubbles"][1] = {"speaker": "Zoe", "text": "me", "pose": None, "sticker": None}
     assert beats_ops.validate(d, bible=b, cast_sheet=sheet, new_messages=1, extra_chorus=["Zoe"]) == []
     nxt = bible_ops.apply_beats(b, d, window_entry={"from": "2026-01-01T00:00:00+00:00", "to": "2026-01-02T00:00:00+00:00",
-                                "cursor": {"minute": "2026-01-02T00:00Z", "hash": "a" * 16}, "message_count": 1, "gap": None},
+                                "cursor": {"minute": "2026-01-02T00:00Z", "hash": "a" * 16, "adapter": "whatsapp", "precision": "minute", "signature": {"raw": [], "canonical": []}}, "message_count": 1, "gap": None},
                                 writer={"mode": "replay", "model": "r", "attempts": 1}, extra_chorus=["Zoe"])
     assert "Zoe" in nxt["chorus"]
 
@@ -450,3 +459,16 @@ def test_national_number_matches_its_country_code_alias():
 @pytest.mark.parametrize("text", ["flight 2026-01-15 at 9:41", "on 15.01.2026", "on 15/01/26", "on 1/15/2026 10:30"])
 def test_dates_of_any_length_are_not_masked(text):
     assert whatsapp.mask_numbers(text, {}) == text
+
+
+# Value: protects=a corrupt .zip given to `new` is a coded exit-2 error, never a traceback; fails_when=sniffing lets
+# zipfile.BadZipFile escape (it is not an OSError or ValueError); why_new=test_missing_file_and_bad_zip calls
+# read_export directly, which the registry now runs after sniffing; seam=none;
+# no_claim=which of the two codes is right (base gave EXPORT_ZIP)
+# Regression test, generated by the /ship coverage audit.
+def test_corrupt_zip_on_the_command_line_is_a_coded_error(capsys, tmp_path, not_a_tty):
+    bad = tmp_path / "bad.zip"
+    bad.write_bytes(b"not a zip")
+    code, _, err = run(capsys, "--json", "new", str(bad), "--operator", "Dave", "--tz", TZ, "--show", "z")
+    assert code == 2, err
+    assert json.loads(err.strip().splitlines()[-1])["code"] == "CHATCOM_E_EXPORT_ZIP"
