@@ -52,6 +52,9 @@ The render needs Node.js 22 or newer and ffmpeg. It runs on your computer with n
 the video page allows no outside request, HyperFrames runs with its telemetry off, and CI renders an episode with
 the network cut off.
 
+The video's fonts cover Latin, Greek and Cyrillic text, emoji, Chinese, Japanese and Korean. Arabic, Hebrew,
+Devanagari and Thai have no font yet, so a chat in those scripts shows boxes in its bubbles.
+
 ## Two ways to run it
 
 | | Skill mode (Claude Code) | CLI mode (`chatcom episode`) |
