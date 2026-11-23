@@ -16,7 +16,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 SPEC = ROOT / "docs" / "design" / "any-group-chat.md"
-BUILT_PR = 7  # raise as each wave-1 PR lands
+BUILT_PR = 8  # raise as each wave-1 PR lands
 
 sys.path.insert(0, str(ROOT / "src"))
 

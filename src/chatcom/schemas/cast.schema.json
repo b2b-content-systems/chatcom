@@ -110,11 +110,16 @@
               ],
               "properties": {
                 "file": {
-                  "type": "string"
+                  "type": "string",
+                  "description": "The cutout (transparent PNG), relative to the show folder."
                 },
                 "key": {
                   "type": "string",
                   "pattern": "^[0-9a-f]{64}$"
+                },
+                "raw": {
+                  "type": "string",
+                  "description": "The image as drawn, on green; later poses are drawn from the neutral one."
                 }
               }
             }

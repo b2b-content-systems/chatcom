@@ -158,6 +158,16 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--review", action="store_true", help="stop after transcript.txt so the operator can check it")
     _shot_flags(r, reading=True)
 
+    c = sub.add_parser("cast", help="draw this episode's characters and sets (image calls, your GEMINI_API_KEY)")
+    c.add_argument("show", nargs="?")
+    c.add_argument("--accept-data-flow", action="store_true",
+                   help="the operator has read where the images and prompts go and agrees")
+    c.add_argument("--approve-calls", type=int, help="the exact number of image calls the notice named")
+    c.add_argument("--painter", choices=["gemini", "replay"], default="gemini",
+                   help="replay draws placeholder images with no network (tests, the demo)")
+    c.add_argument("--image-model", type=_model_id, help="the image model (default gemini-nano-banana-2.1, then "
+                                                         "gemini-3.1-flash-image); a show keeps one model")
+
     w = sub.add_parser("write-prep", help="(skill mode) write the writer bundle and print its path")
     w.add_argument("show", nargs="?")
     w.add_argument("--token-budget", type=int, default=12_000)
@@ -403,6 +413,23 @@ def cmd_read_submit(args) -> int:
     return 0
 
 
+def cmd_cast(args) -> int:
+    from chatcom import casting
+    from chatcom.adapters.painter import GeminiPainter, ReplayPainter
+    show = app.resolve_show(args.show)
+    painter = ReplayPainter() if args.painter == "replay" else GeminiPainter(model=args.image_model)
+    res = casting.cast(show, painter, accepted=args.accept_data_flow, approve_calls=args.approve_calls,
+                       say=lambda m: print(m, file=sys.stderr))
+    lines = [f"{res['episode']}: cast with {res['model'] or 'no new images'}; {res['calls']} image(s) planned, "
+             f"{res['paid']} drawn (the rest were cached)"]
+    if res["refused"]:
+        lines.append("the image model declined these photos, so they are cast from how they text: "
+                     + ", ".join(res["refused"]))
+    lines += ["render arrives with Next Step 4", res["cast_next"]]
+    emit(args, {**res, "calls_billed": res["paid"] if painter.mode == "gemini" else 0}, lines)
+    return 0
+
+
 def cmd_status(args) -> int:
     info = app.status(app.resolve_show(args.show))
     lock = f"held by process {info['lock']['pid']} since {info['lock']['since']}" if info["lock"] else "free"
@@ -443,7 +470,7 @@ def cmd_doctor(args) -> int:
 
 
 COMMANDS = {"new": cmd_new, "ingest": cmd_ingest, "episode": cmd_episode, "write-prep": cmd_write_prep,
-            "write-submit": cmd_write_submit, "read-prep": cmd_read_prep, "read-submit": cmd_read_submit, "status": cmd_status, "migrate": cmd_migrate, "shows": cmd_shows,
+            "write-submit": cmd_write_submit, "read-prep": cmd_read_prep, "cast": cmd_cast, "read-submit": cmd_read_submit, "status": cmd_status, "migrate": cmd_migrate, "shows": cmd_shows,
             "doctor": cmd_doctor}
 
 

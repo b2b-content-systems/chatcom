@@ -262,6 +262,7 @@ on stdout and a notice as `{notice_text, data_flow, next_command}` on stdout.
 | `CHATCOM_E_READ_INVALID` | 2 | 5 |
 | `CHATCOM_E_READER_GAVE_UP` | 4 | 5 |
 | `CHATCOM_E_READER_UNAVAILABLE` | 4 | 6 |
+| `CHATCOM_E_PAINTER_UNAVAILABLE` | 4 | 8 |
 <!-- /check_spec:codes -->
 
 `CHATCOM_W_WHOLE_IMPORT` is a warning, not an error: the run continues.
@@ -273,7 +274,7 @@ cleared automatically, so there is no unlock command.
 <!-- check_spec:flags -->
 | Flag | Commands | Meaning | PR |
 |---|---|---|---|
-| `--accept-data-flow` | new, ingest, episode | answer the data-flow notice (on `new`, for screenshots) | 1 |
+| `--accept-data-flow` | new, ingest, episode, cast | answer the data-flow notice (on `new`, for screenshots; on `cast`, for images) | 1 |
 | `--source` | new, ingest, episode | force the source adapter | 1 |
 | `--thread` | new, ingest, episode | pick one chat in a multi-chat export | 1 |
 | `--writer` | new, episode | `anthropic` or `replay` (the skill's `ingest` is always session mode); on `new` it picks the screenshot reader and notice | shipped |
@@ -287,6 +288,9 @@ cleared automatically, so there is no unlock command.
 | `--replay-reads` | new, episode | recorded screenshot reads for the ReplayReader (CI, the demo) | 4 |
 | `--import` | read-prep, read-submit | a pending screenshot import from `new` in skill mode (no show yet) | 5 |
 | `--reader-model` | new, episode | override the reader model | 6 |
+| `--approve-calls` | cast | the exact number of image calls the notice named | 8 |
+| `--painter` | cast | `gemini` (default) or `replay` (no network) | 8 |
+| `--image-model` | cast | the image model; a show keeps one | 8 |
 <!-- /check_spec:flags -->
 
 ## Tests that must exist

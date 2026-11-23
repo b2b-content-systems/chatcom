@@ -7,8 +7,9 @@
 starring the people in it, in the style of a show you pick. Next week it writes the next one, and it remembers
 the running jokes.
 
-**Current status: v0.1 is in development.** Today CHATCOM reads the chat and writes the episode's script
-(`beats.json`) and the show's memory. Casting and the video render are next. The sample episodes on the site
+**Current status: v0.1 is in development.** Today CHATCOM reads the chat, writes the episode's script
+(`beats.json`) and the show's memory, and casts the show (each member in 6 poses, and the sets). The video
+render is next. The sample episodes on the site
 were made with the same pipeline.
 
 <p align="center"><img src=".github/assets/demo.gif" alt="One group chat becomes an episode in several styles" width="640"></p>
@@ -96,6 +97,7 @@ how many it made (`calls_billed`). The limits:
 | --- | --- |
 | Reading screenshots | 3 tries per image, 3 at a time, 40 images per import (`--max-images` raises it) |
 | Writing an episode | 3 attempts per prep, 3 preps per episode |
+| Casting | You approve the exact number of image calls first. A 5-person cast is 35 for the first episode (6 poses each, the style frame, the sets); later episodes at most 2 new sets |
 | Re-runs | Reads are cached in the show, so the same screenshots are never paid for twice |
 
 ## Commands
@@ -106,12 +108,13 @@ how many it made (`calls_billed`). The limits:
 | `chatcom episode <show> --export <file>` | Make this week's episode (CLI mode) |
 | `chatcom ingest`, `write-prep`, `write-submit` | The skill's writing steps |
 | `chatcom read-prep`, `read-submit` | The skill's screenshot-reading steps |
+| `chatcom cast <show>` | Draw the cast (6 poses each) and the sets for this episode |
 | `chatcom status <show>` | Where the episode stands, and the next command |
 | `chatcom migrate <show>` | Upgrade a show made by an older version (backs it up first) |
 | `chatcom shows`, `chatcom doctor` | List shows; check this computer |
 
 An episode moves through `copied` → `read` → `ingested` → `drafted` → `cast` → `rendered` → `encoded` →
-`committed`. This release stops at `drafted`. The show's memory changes only at `committed`.
+`committed`. This release stops at `cast`. The show's memory changes only at `committed`.
 
 ## Remove a show
 

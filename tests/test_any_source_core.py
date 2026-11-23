@@ -542,7 +542,7 @@ def test_status_lock_holder_and_next_for_cli_and_drafted(capsys, lake_show, beat
     assert run(capsys, "write-submit", "lake-house", "--file", str(good), "--model", "m")[0] == 0
     code, out, _ = run(capsys, "--json", "status", "lake-house")
     info = json.loads(out)
-    assert (info["stage"], info["lock"]) == ("drafted", None) and "beats.json" in info["next"]
+    assert (info["stage"], info["lock"]) == ("drafted", None) and info["next"] == "chatcom cast lake-house"
 
 
 # Value: protects=migrate without a slug picks the only show and refuses 0 or 2, and a newer bible is refused with

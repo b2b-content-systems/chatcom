@@ -73,7 +73,7 @@ class GeminiReader:
         feedback = ""
         for _ in range(TRIES):
             ans = self._ask(data, instructions() + feedback)
-            if ans.provider == "gemini" and (ans.finish == "other" or not ans.text.strip()):
+            if ans.provider == "gemini" and (ans.finish in ("refused", "other") or not ans.text.strip()):
                 # a safety block or an empty reply: Claude, not the same model again
                 with self._lock:
                     self.fallbacks.append(f"Gemini returned no read (finish {ans.finish})")

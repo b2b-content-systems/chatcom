@@ -115,6 +115,12 @@ No reader could answer in CLI mode: Gemini (with your `GEMINI_API_KEY`) and then
 `ANTHROPIC_API_KEY`) both failed (no key, expired key, rate limit, outage). The error names each reason. Set a
 key and run the command again: reads already done are cached and not paid for twice. Exit 4.
 
+## chatcom_e_painter_unavailable
+Casting could not draw an image. Either the image model stopped (no `GEMINI_API_KEY`, a revoked key, or an
+exhausted quota), or neither the default model nor the fallback could finish the batch. Images already drawn are
+kept in the show's cache and are not paid for twice: fix the key or wait for the quota, then run `chatcom cast`
+again. Exit 4.
+
 ## chatcom_e_export_outside_inbox
 In skill mode (`chatcom ingest` for the session writer, and `chatcom episode --dry-run` without a terminal) chatcom
 reads only the export given at `chatcom new` or files in the show's inbox (`~/.chatcom/<show>/inbox/`). Other

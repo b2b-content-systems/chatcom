@@ -10,7 +10,7 @@ CHATCOM turns a group chat into a TV episode starring the people in it, in the s
 (sitcom, anime, 80s cartoon, true crime and more), and remembers running jokes from week to week.
 
 **Status: v0.1 is in development.** Today the engine reads a WhatsApp or Telegram export, a pasted chat or screenshots, and writes the episode's script
-(`beats.json`) and the show's memory (the bible). Casting and the video render are next. Say this plainly if the person expects a video, and show them the
+(`beats.json`), the show's memory (the bible) and casts the show. Casting and the video render are next. Say this plainly if the person expects a video, and show them the
 sample episodes: https://b2b-content-systems.github.io/chatcom/
 
 ## Rules that always apply
@@ -85,6 +85,9 @@ For screenshots (Signal, iMessage, Discord, any app), the export is the folder o
    `bundle.json`'s `write_to`.
 7. **Submit:** `chatcom write-submit <show> --file <beats.json path> --model <your model name>`.
    - Exit 0: tell the person the episode is drafted, with its title, TV Guide line and credits.
+8. **Cast:** `chatcom --json cast <show>`. It exits 6 with a notice and the number of image calls. Show both to the
+   person (the calls use their own Gemini key). After a yes, run the `next_command` it printed (it carries
+   `--accept-data-flow --approve-calls N`). Tell them who was cast and anyone whose photo the model declined.
    - Exit 2 with `CHATCOM_E_BEATS_INVALID`: it lists problems by JSON path. Fix every one and submit the whole
      file again. Any other exit-2 error (for example `CHATCOM_E_STATE` or `CHATCOM_E_LOCKED`) is not about the
      draft: tell the person what its `fix:` line says and stop.
