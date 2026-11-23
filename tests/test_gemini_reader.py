@@ -183,10 +183,9 @@ def test_cli_mode_reads_screenshots_after_consent(capsys, chatcom_home, tmp_path
     assert code == 0, err
     info = json.loads(out)
     assert info["source"] == "screenshots" and info["slug"] == "lake-house-boys" and seen["calls"] == 3
-    assert info["format"]["reader"] == "gemini-3.6-flash"
-    # a second run of the same screenshots reads from the cache: no new calls
-    show = chatcom_home / "lake-house-boys"
-    assert list((show / "imports").glob("*/cache/*.json"))
+    assert info["format"]["reader"] == "gemini-3.6-flash x3"  # the model that really answered, and how often
+    # the reads move into the show's own cache (a later import of the same images never pays again)
+    assert len(list((chatcom_home / "lake-house-boys" / "cache" / "reads").glob("*.json"))) == 3
 
 
 @needs_ffmpeg
@@ -202,3 +201,71 @@ def test_a_reply_cut_off_at_the_token_limit_is_split_without_spending_a_try(caps
     imgs = sorted(p.name for p in next((chatcom_home / "lake-house-boys" / "imports").glob("*/images")).iterdir())
     # 1 cut reply + 1 for the halves (identical test pixels: the second half is a cache hit) + 2 others
     assert "001a.png" in imgs and "001b.png" in imgs and seen["calls"] == 4
+
+
+
+# ---- PR 6 review notes ------------------------------------------------------------------------------
+
+def test_an_invalid_gemini_key_falls_back_to_claude(tmp_path):
+    p, c = copy(tmp_path)
+    f = Fake(**{"gemini-3.6-flash": [(400, {"error": {"message": "API key not valid"}})], "claude": [claude_ok(GOOD)]})
+    r = G.GeminiReader(transport=f)
+    assert r.read(p, c) == GOOD and [k for k, *_ in f.calls] == ["gemini-3.6-flash", "claude"] and r.fallbacks
+    assert dict(r.answered_by) == {"claude-sonnet-5-5": 1}
+
+
+@needs_ffmpeg
+def test_a_read_too_long_even_split_gives_up_after_bounded_calls(capsys, chatcom_home, tmp_path, monkeypatch):
+    monkeypatch.setattr(cli, "_tty", lambda: False)
+    calls = []
+
+    def always_cut(url, headers, payload):
+        calls.append(1)
+        return gemini_ok({"chat_name": None, "rows": []}, finish="MAX_TOKENS")
+    monkeypatch.setattr(lf, "http_transport", always_cut)
+    monkeypatch.setattr("chatcom.adapters.screenshots.PARALLEL", 1)
+    d = tmp_path / "s"
+    d.mkdir()
+    (d / "IMG_0001.PNG").write_bytes(png(30, 70, rgb=(200, 240, 240)))
+    code, _, err = run(capsys, "--json", "new", str(d), "--operator", "Dave", "--tz", TZ, "--accept-data-flow")
+    assert code == 4 and json.loads(err)["code"] == "CHATCOM_E_READER_GAVE_UP"
+    assert len(calls) <= 1 + 2 + 4  # the image, its halves, their halves
+
+
+@needs_ffmpeg
+def test_episode_bills_screenshot_reads_through_review(capsys, lake_show, tmp_path, monkeypatch, beats_s01e01):
+    monkeypatch.setattr(cli, "_tty", lambda: False)
+    read_transport, seen = _routing_fake()
+
+    def transport(url, headers, payload):
+        if "anthropic" in url:  # the writer
+            return 200, {"model": "claude-sonnet-5-5", "content": [{"type": "text", "text": json.dumps(beats_s01e01)}],
+                         "stop_reason": "end_turn"}
+        return read_transport(url, headers, payload)
+    monkeypatch.setattr(lf, "http_transport", transport)
+    inbox = _shots(lake_show.inbox / "week2")
+    code, out, err = run(capsys, "--json", "episode", "lake-house", "--export", str(inbox), "--accept-data-flow",
+                         "--review")
+    assert code == 0, err
+    assert json.loads(lake_show.state_path("S01E01").read_text("utf-8"))["reader_calls"] == 3
+    code, out, err = run(capsys, "--json", "episode", "lake-house", "--export", json.loads(out)["transcript"],
+                         "--accept-data-flow")
+    assert code == 0, err
+    info = json.loads(out)
+    assert info["stage"] == "drafted" and info["calls_billed"] == info["attempts"] + 3
+
+
+@needs_ffmpeg
+def test_a_failed_new_keeps_its_paid_reads_for_the_retry(capsys, chatcom_home, tmp_path, monkeypatch):
+    monkeypatch.setattr(cli, "_tty", lambda: False)
+    transport, seen = _routing_fake()
+    monkeypatch.setattr(lf, "http_transport", transport)
+    d = _shots(tmp_path / "shots")
+    code, _, err = run(capsys, "--json", "new", str(d), "--operator", "Dave", "--exclude", "Ghost", "--tz", TZ,
+                       "--accept-data-flow")
+    assert code == 2 and json.loads(err)["code"] == "CHATCOM_E_UNKNOWN_MEMBER" and seen["calls"] == 3
+    code, out, err = run(capsys, "--json", "new", str(d), "--operator", "Dave", "--tz", TZ, "--accept-data-flow")
+    assert code == 0, err
+    assert seen["calls"] == 3  # every read came from the kept cache
+    show_cache = chatcom_home / json.loads(out)["slug"] / "cache" / "reads"
+    assert len(list(show_cache.glob("*.json"))) == 3 and not any((chatcom_home / "imports" / "cache").iterdir())

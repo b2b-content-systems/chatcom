@@ -56,9 +56,16 @@ def load(paths: list[Path], ctx) -> tuple[ParseResult, str]:
         return [screens.Image(c["file"], datetime.fromisoformat(c["captured"]).date(), doc["rows"],
                               doc.get("chat_name"))]
 
-    # up to 3 reads at once; results keep manifest order
-    with ThreadPoolExecutor(max_workers=PARALLEL if reader.mode != "replay" else 1) as pool:
-        reads = [img for imgs in pool.map(read_one, copies) for img in imgs]
+    # up to 3 reads at once; results keep manifest order. On the first error the reads not yet started are
+    # cancelled, so a failing import stops paying; reads already done are in the cache for the retry.
+    pool = ThreadPoolExecutor(max_workers=PARALLEL if reader.mode != "replay" else 1)
+    futures = [pool.submit(read_one, c) for c in copies]
+    try:
+        reads = [img for f in futures for img in f.result()]
+    except BaseException:
+        pool.shutdown(wait=True, cancel_futures=True)
+        raise
+    pool.shutdown(wait=True)
     joined = screens.join(reads, tz=ZoneInfo(ctx.tz), operator=shots["operator"], speakers=shots.get("speakers"),
                           reverse=shots.get("reverse"), anchor=shots.get("anchor"))
     msgs = [{"sender": m["label"], "time": m["time"], "time_precision": m["time_precision"], "text": m["text"],
@@ -79,6 +86,10 @@ def load(paths: list[Path], ctx) -> tuple[ParseResult, str]:
     res.fmt = {"images": len(entries), "copies": len(copies), "order": "newest first" if joined.reversed else "as given",
                "reader": reader.model}
     res.artifacts["reader_calls"] = getattr(reader, "calls", 0)
+    answered = getattr(reader, "answered_by", None)
+    if answered:  # name the models that really answered (a fallback may have read everything)
+        res.artifacts["reader_answered"] = dict(answered)
+        res.fmt["reader"] = ", ".join(f"{m} x{n}" for m, n in answered.most_common())
     if getattr(reader, "fallbacks", None):
         res.artifacts["reader_fallbacks"] = list(reader.fallbacks)
     res.artifacts.update({"transcript": str(path), "workdir": str(work)})

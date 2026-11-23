@@ -187,8 +187,8 @@ def new_show(export, setup: dict, *, tz: str, max_unparsed: float = MAX_UNPARSED
                                "Ask the operator. If they agree, run the same command with --accept-data-flow.",
                                recovery="ask", context={"mode": writer, "notice": text})
         work = store.home() / "imports" / log.run_id
-        # the read cache lives with the copies, so it moves into the show (or is removed) with them
-        shot_ctx = shot_context(shots, writer, setup["operator_sender"], work, work / "cache")
+        # reads for a show not made yet: kept if `new` fails (a retry never pays twice), moved into the show
+        shot_ctx = shot_context(shots, writer, setup["operator_sender"], work, NEW_READ_CACHE())
     try:
         return _new_show(exports, setup, tz, max_unparsed, log, key, source, thread, shot_ctx)
     except BaseException:
@@ -197,6 +197,23 @@ def new_show(export, setup: dict, *, tz: str, max_unparsed: float = MAX_UNPARSED
             import shutil
             shutil.rmtree(shot_ctx["workdir"], ignore_errors=True)
         raise
+
+
+def NEW_READ_CACHE() -> Path:
+    return store.home() / "imports" / "cache"
+
+
+def _adopt_reads(import_dir: Path, show_cache: Path) -> None:
+    """Move the cached reads of this import's copies from the new-show cache
+    into the show's own cache."""
+    manifest = import_dir / "manifest.json"
+    if not manifest.exists() or not NEW_READ_CACHE().exists():
+        return
+    shas = {c["sha256"] for c in store.read_json(manifest).get("copies", [])}
+    for f in NEW_READ_CACHE().glob("*.json"):
+        if f.name.split("-", 1)[0] in shas:
+            show_cache.mkdir(parents=True, exist_ok=True)
+            f.rename(show_cache / f.name)
 
 
 def _pending_dir(exports: list) -> Path | None:
@@ -246,10 +263,11 @@ def _new_show(exports, setup, tz, max_unparsed, log, key, source, thread, shot_c
     sheet = bible_ops.new_cast_sheet(bible, photos)
     show.create_dirs()
     export_paths = [str(Path(e).expanduser().resolve()) for e in exports]
-    if shot_ctx is not None:  # the copies and the transcript move in with the show
+    if shot_ctx is not None:  # the copies, the transcript and their cached reads move in with the show
         dest = show.dir / "imports" / log.run_id
         dest.parent.mkdir(parents=True, exist_ok=True)
         Path(shot_ctx["workdir"]).rename(dest)
+        _adopt_reads(dest, show.dir / "cache" / "reads")
     if pending is not None:  # a skill-mode import's transcript: its copies and reads move in too
         dest = show.dir / "imports" / pending.name
         dest.parent.mkdir(parents=True, exist_ok=True)
@@ -421,6 +439,8 @@ def ingest(show: store.Show, export, *, accepted: bool, mode: str, since: dateti
             st = state_ops.new(code, None, mode, store.now(), stage="read", reader=shot_ctx["reader"].mode)
             st["source"] = "screenshots"
             st["transcript"] = res.artifacts["transcript"]
+            if res.artifacts.get("reader_calls"):
+                st["reader_calls"] = res.artifacts["reader_calls"]  # paid reads count even when review stops here
             store.write_json(sp, st)
             log.write(f"{code}: screenshots read, stopped for review at {st['transcript']}")
             return Path(st["transcript"]), None, st
@@ -439,8 +459,11 @@ def ingest(show: store.Show, export, *, accepted: bool, mode: str, since: dateti
         st["unparsed_rate"] = round(res.unparsed_rate, 4)
         st["source"] = res.adapter
         st["resume"] = {"method": win.method, "warning": win.warning}
-        if res.artifacts.get("reader_calls"):
-            st["reader_calls"] = res.artifacts["reader_calls"]  # billed to the operator's own Gemini key
+        if res.artifacts.get("reader_calls") or (prior or {}).get("reader_calls"):
+            # billed to the operator's own Gemini key; a continued --review import keeps its count
+            st["reader_calls"] = res.artifacts.get("reader_calls") or prior.get("reader_calls")
+        if res.artifacts.get("reader_answered"):
+            st["reader_answered"] = res.artifacts["reader_answered"]
         ep = show.episode_dir(code)
         store.write_jsonl(ep / "messages.jsonl", win.messages)
         store.write_json(sp, st)
