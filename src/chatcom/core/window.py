@@ -47,12 +47,19 @@ def dedupe(messages: list[dict]) -> list[dict]:
     return out
 
 
-def apply_exclusions(messages: list[dict], exclude: list[str]) -> tuple[list[dict], int]:
-    """Drop excluded senders and blank @mentions of them, before any model call."""
+def apply_exclusions(messages: list[dict], exclude: list[str],
+                     aliases: dict[str, list[str]] | None = None) -> tuple[list[dict], int]:
+    """Drop excluded senders and blank @mentions of them (by name or any
+    alias), before any model call."""
     if not exclude:
         return messages, 0
     names = {e.casefold() for e in exclude}
-    pats = [re.compile(r"@" + re.escape(e) + r"\b", re.I) for e in sorted(exclude, key=len, reverse=True)]
+    forms = set(exclude)
+    for canon, others in (aliases or {}).items():
+        if canon.casefold() in names:
+            forms.update(others)
+    # (?!\w), not \b: a name ending in an emoji or "." has no word boundary.
+    pats = [re.compile(r"@" + re.escape(f) + r"(?!\w)", re.I) for f in sorted(forms, key=len, reverse=True)]
     out, dropped = [], 0
     for m in messages:
         if m["sender"].casefold() in names:
@@ -67,7 +74,7 @@ def apply_exclusions(messages: list[dict], exclude: list[str]) -> tuple[list[dic
 
 def select(messages: list[dict], previous_cursor: dict | None, *, since: datetime | None = None,
            until: datetime | None = None, max_days: int = MAX_DAYS, bottle: bool = False,
-           exclude: list[str] | None = None) -> Window:
+           exclude: list[str] | None = None, aliases: dict[str, list[str]] | None = None) -> Window:
     msgs = dedupe(messages)
     if not msgs:
         raise ChatcomError("CHATCOM_E_EMPTY_EXPORT", "the export holds no messages",
@@ -92,13 +99,18 @@ def select(messages: list[dict], previous_cursor: dict | None, *, since: datetim
                        "to": _t(older[-1]).isoformat(timespec="seconds"), "skipped": len(older)}
                 new = [m for m in new if _t(m) >= cap_start]
     pre = new
-    new, excluded = apply_exclusions(new, exclude or [])
+    new, excluded = apply_exclusions(new, exclude or [], aliases)
     if not new:
-        if bottle and previous_cursor is not None:
+        if bottle and previous_cursor is not None and msgs:
             # A bottle episode with no new lines keeps the old cursor.
             ref = msgs[-1]
             return Window([], _t(ref), _t(ref), dict(previous_cursor), None, excluded)
-        last = msgs[-1]["time"] if msgs else "none"
+        last = msgs[-1]["time"] if msgs else "none in the chosen range"
+        if previous_cursor is None:
+            raise ChatcomError("CHATCOM_E_STALE_EXPORT",
+                               f"no messages in the chosen window (export ends {last})",
+                               "Widen --since/--until, or export the chat again.",
+                               context={"export_last": last})
         raise ChatcomError("CHATCOM_E_STALE_EXPORT",
                            f"no new messages after the last episode (export ends {last})",
                            "Export the chat again so it includes this week, or pass --bottle for a callback episode.",

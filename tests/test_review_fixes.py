@@ -1,0 +1,281 @@
+"""Regression tests for the pre-landing review findings and the coverage gaps
+the audit named. Each test's value card says what it protects."""
+import json
+import os
+import time
+from datetime import datetime, timezone
+
+import pytest
+
+from chatcom import app, cli
+from chatcom.adapters import store, whatsapp
+from chatcom.adapters.writers import llm_fallback
+from chatcom.adapters.writers.anthropic import AnthropicWriter
+from chatcom.adapters.writers.base import parse_json
+from chatcom.adapters.writers.replay import ReplayWriter
+from chatcom.core import bundle as bundle_ops
+from chatcom.core import window
+from chatcom.core.errors import ChatcomError
+from conftest import LAKE, TZ, WA
+
+
+def run(capsys, *argv):
+    code = cli.main(list(argv))
+    out, err = capsys.readouterr()
+    return code, out, err
+
+
+@pytest.fixture
+def not_a_tty(monkeypatch):
+    monkeypatch.setattr(cli, "_tty", lambda: False)
+
+
+# ---- privacy: phone numbers and exclusions ---------------------------------
+
+# Value: protects=a phone-number sender keeps one label across weekly exports; fails_when=labels follow order of appearance again; why_new=red-team showed an excluded person's label moving to someone else; seam=none; no_claim=none beyond protects
+def test_phone_labels_are_stable_across_exports():
+    week1 = "[1/2/26, 10:00:00 AM] +1 555 010 1111: a\n[1/2/26, 10:01:00 AM] +1 555 020 2222: b\n"
+    week2 = "[1/9/26, 10:00:00 AM] Alice: a2\n[1/9/26, 10:01:00 AM] +1 555 020 2222: secret\n"
+    b1 = whatsapp.parse(week1, TZ).masked["+1 555 020 2222"]
+    r2 = whatsapp.parse(week2, TZ, aliases={"Alice": ["+1 555 010 1111"]})
+    assert r2.masked["+1 555 020 2222"] == b1
+    w = window.select(r2.messages, None, exclude=[b1])
+    assert all("secret" not in m["text"] for m in w.messages)
+
+
+# Value: protects=phone numbers in message text and number-style @mentions never reach the writer; fails_when=masking covers only the sender field; why_new=targeted and red-team reviews both reproduced the leak; seam=none; no_claim=numbers under 10 digits
+def test_phone_numbers_in_text_are_masked():
+    t = ("[1/2/26, 10:00:00 AM] +1 (555) 010-2233: yo\n"
+         "[1/2/26, 10:01:00 AM] Dave: @15550102233 call me at +1 555 010 2233 or +44 20 7946 0958\n"
+         "[1/2/26, 10:02:00 AM] Dave: flight 2026-01-15 at 9:41, gate 12\n")
+    r = whatsapp.parse(t, TZ)
+    texts = " ".join(m["text"] for m in r.messages)
+    for digits in ("5550102233", "2079460958"):
+        assert digits not in texts.replace(" ", "").replace("-", "")
+    label = whatsapp.phone_label("+1 (555) 010-2233")
+    assert f"@{label} call me at {label}" in texts
+    assert "2026-01-15 at 9:41, gate 12" in texts  # dates and times untouched
+    r2 = whatsapp.parse(t, TZ, aliases={"Mike": ["+1 (555) 010-2233"]})
+    assert "@Mike call me at Mike" in " ".join(m["text"] for m in r2.messages)
+
+
+# Value: protects=aliases (often phone numbers) stay out of the writer prompt; fails_when=windowed() sends cast members whole; why_new=the specialist review found 010-2233 in render_prompt; seam=none; no_claim=none beyond protects
+def test_aliases_never_reach_the_prompt():
+    show, _ = app.new_show(str(LAKE), {"operator_sender": "Dave", "slug": "lh",
+                                       "aliases": {"Mike": ["Michael R", "+1 (555) 010-2233"]}}, tz=TZ)
+    b = json.loads(show.bible_path.read_text())
+    s = json.loads(show.cast_path.read_text())
+    assert b["cast"][1]["aliases"]  # kept locally
+    prompt = bundle_ops.render_prompt(bundle_ops.build(b, s, []))
+    assert "010-2233" not in prompt and "Michael R" not in prompt
+
+
+# Value: protects=@mentions of an excluded person are blanked by alias and for names ending in an emoji; fails_when=mention match uses \b or only the canonical name; why_new=both reviews reproduced the miss; seam=none; no_claim=nicknames that are not aliases
+def test_exclusion_blanks_alias_and_emoji_mentions():
+    msgs = [{"id": "1" * 16, "sender": "Theo", "text": "@Michael R and @Mom ❤️ and @Mike. lol", "time": "2026-01-02T10:00:00+00:00"}]
+    out, _ = window.apply_exclusions(msgs, ["Mike", "Mom ❤️"], aliases={"Mike": ["Michael R"]})
+    assert out[0]["text"] == "@[someone] and @[someone] and @[someone]. lol"
+
+
+# Value: protects=setup.exclude reaches ingest and the notice; fails_when=app.ingest stops passing setup.exclude or notice() drops it; why_new=only the core function was tested; seam=none; no_claim=none beyond protects
+def test_excluded_member_never_reaches_messages_file(capsys, chatcom_home, tmp_path, not_a_tty):
+    setup = tmp_path / "setup.json"
+    setup.write_text(json.dumps({"operator_sender": "Dave", "exclude": ["Sam"]}))
+    assert run(capsys, "new", str(LAKE), "--setup", str(setup), "--tz", TZ, "--show", "lake-house")[0] == 0
+    code, _, err = run(capsys, "ingest", "lake-house", "--export", str(LAKE))
+    assert code == 6 and "Excluded before any model call: Sam" in err
+    run(capsys, "ingest", "lake-house", "--export", str(LAKE), "--confirmed")
+    rows = (chatcom_home / "lake-house" / "episodes" / "S01E01" / "messages.jsonl").read_text()
+    assert '"sender": "Sam"' not in rows and "Priya" in rows
+
+
+# ---- window edges ---------------------------------------------------------
+
+# Value: protects=--since/--until narrow the window in the show's zone, and bad ranges fail as errors; fails_when=the filters drop, naive dates use the machine zone, or bottle+until crashes; why_new=no test passed since/until; seam=none; no_claim=none beyond protects
+def test_since_until_and_empty_ranges(capsys, chatcom_home, not_a_tty):
+    run(capsys, "new", str(LAKE), "--operator", "Dave", "--tz", TZ, "--show", "lake-house")
+    code, out, _ = run(capsys, "episode", "lake-house", "--export", str(LAKE), "--dry-run",
+                       "--since", "2026-01-05T00:00", "--until", "2026-01-06T00:00")
+    w = json.loads(out)["window"]
+    assert code == 0 and w["from"].startswith("2026-01-05T19:45") and w["to"].endswith("-05:00")
+    code, _, err = run(capsys, "episode", "lake-house", "--export", str(LAKE), "--dry-run", "--until", "2025-01-01")
+    assert code == 2 and "no messages in the chosen window" in err
+    with pytest.raises(SystemExit) as e:  # argparse rejects it as usage, exit 2
+        cli.main(["episode", "lake-house", "--export", str(LAKE), "--dry-run", "--since", "not-a-date"])
+    assert e.value.code == 2 and "ISO 8601" in capsys.readouterr().err
+
+
+def test_bottle_with_until_before_every_message_is_an_error_not_a_crash():
+    from conftest import LAKE as lake
+    text, _ = whatsapp.read_export(lake)
+    msgs = whatsapp.parse(text, TZ).messages
+    cur = {"minute": "2026-01-16T23:01Z", "hash": msgs[-1]["id"]}
+    with pytest.raises(ChatcomError) as e:
+        window.select(msgs, cur, bottle=True, until=datetime(2025, 1, 1, tzinfo=timezone.utc))
+    assert e.value.code == "CHATCOM_E_STALE_EXPORT"
+
+
+# ---- state, locking, slugs --------------------------------------------------
+
+# Value: protects=one run per show; fails_when=a live lock is ignored, a fresh empty lock is stolen, or a dead one blocks forever; why_new=Show.lock had no tests and an empty-pid race; seam=none; no_claim=two real processes racing
+def test_show_lock_live_empty_and_stale(lake_show):
+    lock = lake_show.dir / ".lock"
+    lock.write_text(str(os.getpid()))
+    with pytest.raises(ChatcomError) as e:
+        with lake_show.lock():
+            pass
+    assert e.value.code == "CHATCOM_E_LOCKED"
+    lock.write_text("")  # just created, pid not written yet: held
+    with pytest.raises(ChatcomError):
+        with lake_show.lock():
+            pass
+    old = time.time() - 60
+    os.utime(lock, (old, old))  # an old empty lock is stale
+    with lake_show.lock():
+        assert lock.read_text() == str(os.getpid())
+    lock.write_text("999999")  # a dead process
+    with lake_show.lock():
+        pass
+    assert not lock.exists()
+
+
+def test_slug_with_a_path_is_refused(capsys, not_a_tty):
+    code, _, err = run(capsys, "write-prep", "../etc")
+    assert code == 2 and "is not a show slug" in err
+
+
+# Value: protects=a drafted episode is never overwritten by a re-ingest, and a re-ingest before drafting restarts attempts; fails_when=ingest overwrites state at drafted or keeps a spent attempt counter; why_new=app.ingest's stage check never ran; seam=none; no_claim=the future rewrite command
+def test_reingest_rules(capsys, chatcom_home, beats_s01e01, not_a_tty):
+    run(capsys, "new", str(LAKE), "--operator", "Dave", "--tz", TZ, "--show", "lake-house")
+    run(capsys, "ingest", "lake-house", "--export", str(LAKE), "--confirmed")
+    bad = chatcom_home / "bad.json"
+    bad.write_text("{}")
+    run(capsys, "write-submit", "lake-house", "--file", str(bad), "--model", "m")
+    sp = chatcom_home / "lake-house" / "episodes" / "S01E01" / "state.json"
+    assert json.loads(sp.read_text())["attempts"] == 1
+    run(capsys, "ingest", "lake-house", "--export", str(LAKE), "--confirmed")
+    assert json.loads(sp.read_text())["attempts"] == 0
+    good = chatcom_home / "good.json"
+    good.write_text(json.dumps(beats_s01e01))
+    assert run(capsys, "write-submit", "lake-house", "--file", str(good), "--model", "m")[0] == 0
+    code, _, err = run(capsys, "ingest", "lake-house", "--export", str(LAKE), "--confirmed")
+    assert code == 2 and "CHATCOM_E_STATE" in err and "already drafted" in err
+
+
+# ---- the writers ----------------------------------------------------------
+
+def _fake(responses):
+    calls = []
+
+    def transport(url, headers, payload):
+        calls.append((url, headers, payload))
+        r = responses.pop(0)
+        if isinstance(r, Exception):
+            raise r
+        return r
+    return transport, calls
+
+
+# Value: protects=the main CLI writer path and "a bad request is not an outage"; fails_when=a 200 is parsed wrong, or a 400 silently goes to Gemini; why_new=llm_fallback's success and 400 paths never ran; seam=none; no_claim=real network or TLS
+def test_claude_success_and_400_does_not_fall_back(monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "x" * 12)
+    monkeypatch.setenv("GEMINI_API_KEY", "y" * 12)
+    t, calls = _fake([(200, {"model": "claude-sonnet-5-5", "content": [{"type": "text", "text": "{}"}]})])
+    d = AnthropicWriter(transport=t).draft("b", "p")
+    assert d.model == "claude-sonnet-5-5" and d.fallback_reason is None and len(calls) == 1
+    t, calls = _fake([(400, {"error": "bad"})])
+    with pytest.raises(ChatcomError) as e:
+        AnthropicWriter(transport=t).draft("b", "p")
+    assert e.value.code == "CHATCOM_E_WRITER_BAD_REQUEST" and len(calls) == 1
+
+
+def test_auth_failure_and_missing_key_fall_back(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "y" * 12)
+    gem = (200, {"modelVersion": "gemini-3.6-flash", "candidates": [{"content": {"parts": [{"text": "{}"}]}}]})
+    t, _ = _fake([gem])  # no ANTHROPIC_API_KEY: straight to Gemini
+    assert "no ANTHROPIC_API_KEY" in AnthropicWriter(transport=t).draft("b", "p").fallback_reason
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "x" * 12)
+    t, _ = _fake([(401, {}), gem])
+    assert "auth failed" in AnthropicWriter(transport=t).draft("b", "p").fallback_reason
+
+
+def test_certificate_failure_says_what_to_do(monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "x" * 12)
+    err = llm_fallback.Unavailable("network: [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed")
+    t, _ = _fake([err])
+    with pytest.raises(ChatcomError) as e:
+        AnthropicWriter(transport=t).draft("b", "p")
+    assert "certifi" in e.value.fix
+
+
+# Value: protects=real model replies are accepted when wrapped in a fence or prose; fails_when=extraction breaks and every wrapped reply burns an attempt; why_new=base.py's fallbacks never ran; seam=none; no_claim=several JSON objects in one reply
+def test_parse_json_variants():
+    assert parse_json('```json\n{"a": 1}\n```') == {"a": 1}
+    assert parse_json('Here it is: {"a": {"b": 2}} hope that helps') == {"a": {"b": 2}}
+    assert parse_json("no json here") is None
+
+
+# Value: protects=the three-attempt cap in CLI mode; fails_when=run_writer swallows GAVE_UP and loops; why_new=the re-raise never ran; seam=none; no_claim=the Anthropic transport
+def test_run_writer_gives_up_after_three_invalid_drafts(capsys, chatcom_home, tmp_path, not_a_tty):
+    run(capsys, "new", str(LAKE), "--operator", "Dave", "--tz", TZ, "--show", "lake-house")
+    rec = tmp_path / "r.json"
+    rec.write_text(json.dumps({"responses": ["nope", "{}", "still nope"]}))
+    code, out, err = run(capsys, "--json", "episode", "lake-house", "--export", str(LAKE), "--writer", "replay", "--replay", str(rec))
+    env = json.loads(err.strip().splitlines()[-1])
+    assert code == 4 and env["code"] == "CHATCOM_E_WRITER_GAVE_UP" and env["context"]["last_draft"].endswith("attempt-3.txt")
+    assert not (chatcom_home / "lake-house" / "episodes" / "S01E01" / "beats.json").exists()
+
+
+# ---- operator-visible errors ------------------------------------------------
+
+# Value: protects=each operator mistake gets its code and exit 2, never a traceback; fails_when=a code or exit status changes; why_new=these branches never ran; seam=none; no_claim=fix-line wording
+def test_operator_errors(capsys, chatcom_home, tmp_path, not_a_tty):
+    assert run(capsys, "new", str(LAKE), "--operator", "Dave", "--tz", TZ, "--show", "lake-house")[0] == 0
+    cases = [
+        (("new", str(LAKE), "--operator", "Dave", "--tz", TZ, "--show", "lake-house"), "CHATCOM_E_SHOW_EXISTS"),
+        (("write-prep", "nope"), "CHATCOM_E_SHOW_NOT_FOUND"),
+        (("write-prep", "lake-house"), "CHATCOM_E_STATE"),
+        (("episode", "lake-house", "--export", str(LAKE), "--writer", "session"), "CHATCOM_E_USAGE"),
+        (("episode", "lake-house", "--export", str(LAKE), "--writer", "replay"), "CHATCOM_E_USAGE"),
+        (("write-submit", "lake-house", "--file", str(tmp_path / "missing.json"), "--model", "m"), "CHATCOM_E_USAGE"),
+    ]
+    for argv, code_name in cases:
+        code, _, err = run(capsys, *argv)
+        assert code == 2 and code_name in err, (argv, err)
+    run(capsys, "new", str(WA / "ios_en_GB_24h.txt"), "--operator", "Dave", "--tz", TZ, "--show", "other")
+    code, _, err = run(capsys, "write-prep")
+    assert code == 2 and "CHATCOM_E_SHOW_AMBIGUOUS" in err
+
+
+def test_unreadable_exports(tmp_path):
+    bad = tmp_path / "latin1.txt"
+    bad.write_bytes("[1/2/26, 10:00:00 AM] José: olá\n".encode("latin-1"))
+    with pytest.raises(ChatcomError) as e:
+        whatsapp.read_export(bad)
+    assert e.value.code == "CHATCOM_E_EXPORT_UNREADABLE"
+
+
+def test_unexpected_error_is_logged_not_dumped(capsys, monkeypatch, not_a_tty):
+    monkeypatch.setattr(cli, "cmd_shows", lambda args: 1 / 0)
+    monkeypatch.setitem(cli.COMMANDS, "shows", cli.cmd_shows)
+    code, _, err = run(capsys, "shows")
+    assert code == 1 and "chatcom bug" in err and "traceback:" in err and "Traceback" not in err
+
+
+def test_doctor_runs(capsys):
+    code, out, _ = run(capsys, "doctor")
+    assert "python >= 3.10" in out and "CHATCOM_HOME writable" in out and code in (0, 3)
+
+
+def test_replay_writer_reads_a_single_response(tmp_path):
+    p = tmp_path / "one.json"
+    p.write_text(json.dumps({"schema_version": 1}))
+    assert ReplayWriter(p).draft("", "").text == '{"schema_version": 1}'
+
+
+def test_store_writes_are_atomic_and_private(chatcom_home):
+    target = store.home() / "x" / "f.json"
+    store.write_json(target, {"a": 1})
+    assert json.loads(target.read_text()) == {"a": 1}
+    assert not list(target.parent.glob(".f.json.*.tmp"))
+    assert oct(os.stat(store.home()).st_mode & 0o777) == "0o700"

@@ -19,6 +19,7 @@ Every parse reports its unparsed-line rate; the caller fails above 2%.
 """
 from __future__ import annotations
 
+import hashlib
 import re
 import zipfile
 from collections import Counter
@@ -78,6 +79,10 @@ _SYSTEM_PHRASES = re.compile(
 _ENCRYPTION = ("end-to-end encrypted", "ende-zu-ende-verschlüsselt", "cifrados de extremo a extremo",
                "protegidas com a criptografia de ponta a ponta", "chiffrés de bout en bout")
 _PHONE = re.compile(r"^\+?[\d\s()\-‑.]{7,}$")
+# A phone number inside message text: 10+ digits with phone separators only
+# (dates and times have fewer digits or other separators).
+_PHONE_IN_TEXT = re.compile(r"(?<![\w+@])(@?)(\+?\d[\d \u00a0()\-\u2011.]{7,}\d)(?!\w)")
+MIN_PHONE_DIGITS = 10
 
 
 @dataclass
@@ -267,6 +272,7 @@ def parse(text: str, tz_name: str, *, aliases: dict[str, list[str]] | None = Non
             system += 1
             continue
         text, media, deleted, edited = _content(raw_text)
+        text = mask_numbers(text, alias_map)
         name = _canonical(sender_n, alias_map, masked)
         minute = utc_minute(aware)
         key = (name, minute)
@@ -415,6 +421,12 @@ def _alias_map(aliases: dict[str, list[str]]) -> dict[str, str]:
     return out
 
 
+def phone_label(number: str) -> str:
+    """A stable stand-in for a phone number: the same number gets the same
+    label in every export, whatever order people appear in."""
+    return "Unnamed " + hashlib.sha256(_digits(number).encode()).hexdigest()[:4]
+
+
 def _canonical(sender: str, alias_map: dict[str, str], masked: dict[str, str]) -> str:
     if sender.casefold() in alias_map:
         return alias_map[sender.casefold()]
@@ -422,7 +434,19 @@ def _canonical(sender: str, alias_map: dict[str, str], masked: dict[str, str]) -
         key = "#" + _digits(sender)
         if key in alias_map:
             return alias_map[key]
-        if sender not in masked:
-            masked[sender] = f"Unnamed {len(masked) + 1}"
+        masked.setdefault(sender, phone_label(sender))
         return masked[sender]
     return sender
+
+
+def mask_numbers(text: str, alias_map: dict[str, str]) -> str:
+    """Phone numbers never leave in message text: a number with an alias
+    becomes that name, any other becomes its stable 'Unnamed' label. A WhatsApp
+    @mention of an unsaved contact is written as their number, so it maps to
+    the same label as their messages."""
+    def repl(m: re.Match) -> str:
+        at, number = m.group(1), m.group(2)
+        if len(_digits(number)) < MIN_PHONE_DIGITS:
+            return m.group(0)
+        return at + (alias_map.get("#" + _digits(number)) or phone_label(number))
+    return _PHONE_IN_TEXT.sub(repl, text) if text else text

@@ -31,10 +31,7 @@ def _date(s: str) -> datetime:
         dt = datetime.fromisoformat(s)
     except ValueError:
         raise argparse.ArgumentTypeError(f"not an ISO 8601 date or time: {s!r}") from None
-    if dt.tzinfo is None:
-        from zoneinfo import ZoneInfo
-        dt = dt.replace(tzinfo=ZoneInfo(_local_tz()))
-    return dt
+    return dt  # without an offset, the show's timezone applies (app._aware)
 
 
 def _pair(s: str) -> tuple[str, str]:
@@ -142,12 +139,13 @@ def cmd_new(args) -> int:
                 setup["title"] = t
     show, info = app.new_show(args.export, setup, tz=setup.get("timezone") or _local_tz(), max_unparsed=args.max_unparsed)
     print(f"show '{info['slug']}' created from {info['messages']} messages "
-          f"({info['format']['platform']}, {info['format']['date_order']}, {info['format']['clock']})")
+          f"({info['format']['platform']}, {info['format']['date_order']}, {info['format']['clock']}; "
+          f"{info['unparsed_rate']:.1%} of lines unparsed)")
     print(f"cast: {', '.join(info['cast'])}")
     if info["chorus"]:
         print(f"chorus: {', '.join(info['chorus'])}")
     if info["masked"]:
-        print(f"{info['masked']} sender(s) shown only as a phone number are masked as 'Unnamed N'; "
+        print(f"{info['masked']} sender(s) shown only as a phone number are masked as 'Unnamed xxxx'; "
               "add them to aliases in setup.json to name them")
     print(show.bible_path)
     return 0
@@ -158,7 +156,8 @@ def cmd_ingest(args) -> int:
     path, win, st = app.ingest(show, args.export, confirmed=args.confirmed, mode="session", since=args.since,
                                until=args.until, bottle=args.bottle, max_days=args.max_days,
                                max_unparsed=args.max_unparsed)
-    print(f"{st['episode']}: {len(win.messages)} messages from {win.start:%Y-%m-%d %H:%M} to {win.end:%Y-%m-%d %H:%M}")
+    print(f"{st['episode']}: {len(win.messages)} messages from {win.start:%Y-%m-%d %H:%M} to {win.end:%Y-%m-%d %H:%M} "
+          f"({st['unparsed_rate']:.1%} of lines unparsed)")
     if win.gap:
         print(f"skipped {win.gap['skipped']} older unread messages (over the {args.max_days}-day cap)")
     print(f"next: chatcom write-prep {show.slug}")
@@ -268,9 +267,18 @@ def main(argv: list[str] | None = None) -> int:
     except KeyboardInterrupt:
         print("stopped", file=sys.stderr)
         return 130
-    except Exception as e:  # unexpected: never print a key
-        print(redact(f"unexpected error: {type(e).__name__}: {e}"), file=sys.stderr)
-        raise SystemExit(1) from None
+    except Exception as e:  # unexpected: a chatcom bug. Never print a key.
+        import traceback
+        from chatcom.adapters import store
+        try:
+            log = store.RunLog(None, f"crash in {args.cmd}")
+            log.write(traceback.format_exc())
+            where = f" (traceback: {log.path})"
+        except OSError:
+            where = ""
+        print(redact(f"unexpected error: {type(e).__name__}: {e}{where}. This is a chatcom bug; please report it."),
+              file=sys.stderr)
+        return 1
 
 
 if __name__ == "__main__":

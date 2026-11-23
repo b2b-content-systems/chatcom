@@ -51,8 +51,9 @@ def test_ios_details():
     assert kinds == ["image", "image"]
     assert sum(m["deleted"] for m in r.messages) == 1
     # a phone-number sender is masked before anything reaches a model
-    assert r.masked == {"+1 (555) 010-2233": "Unnamed 1"}
-    assert "Unnamed 1" in r.senders()
+    label = whatsapp.phone_label("+1 (555) 010-2233")
+    assert r.masked == {"+1 (555) 010-2233": label} and label.startswith("Unnamed ")
+    assert label in r.senders()
 
 
 def test_android_system_lines_with_colons_are_not_senders():
@@ -104,7 +105,7 @@ def test_garbage_reports_unparsed_rate_over_threshold():
 def test_aliases_merge_names_and_numbers():
     r, _ = parse("ios_en_US_12h.txt", aliases={"Michael": ["Mike", "+15550102233"]})
     assert "Michael" in r.senders() and "Mike" not in r.senders()
-    assert r.masked == {} and "Unnamed 1" not in r.senders()
+    assert r.masked == {} and not any(s.startswith("Unnamed") for s in r.senders())
 
 
 def test_zip_display_names():

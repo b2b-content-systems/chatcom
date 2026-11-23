@@ -8,11 +8,15 @@ import os
 import re
 import secrets
 import tempfile
+import time
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
 from chatcom.core.errors import ChatcomError, redact
+
+EMPTY_LOCK_GRACE_S = 10.0
+SLUG = re.compile(r"^[a-z0-9][a-z0-9-]{0,47}$")
 
 
 def now() -> str:
@@ -109,10 +113,14 @@ class Show:
             except FileExistsError:
                 try:
                     pid = int(path.read_text().strip() or "0")
+                    age = time.time() - path.stat().st_mtime
                 except (OSError, ValueError):
-                    pid = 0
-                if pid and _alive(pid):
-                    raise ChatcomError("CHATCOM_E_LOCKED", f"show '{self.slug}' is in use by process {pid}",
+                    pid, age = 0, 0.0
+                # An empty lock is one another run just created and has not
+                # written its pid into yet: held, unless it is old.
+                held = _alive(pid) if pid else age < EMPTY_LOCK_GRACE_S
+                if held:
+                    raise ChatcomError("CHATCOM_E_LOCKED", f"show '{self.slug}' is in use by process {pid or 'starting up'}",
                                        "Wait for the other chatcom run to finish.", recovery="retry",
                                        context={"pid": pid}) from None
                 path.unlink(missing_ok=True)  # stale: its process is gone

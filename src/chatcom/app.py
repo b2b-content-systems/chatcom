@@ -71,6 +71,9 @@ def _parse_export(export: str, tz: str, aliases: dict, max_unparsed: float, log:
 def resolve_show(slug: str | None) -> store.Show:
     shows = store.list_shows()
     if slug:
+        if not store.SLUG.match(slug):
+            raise ChatcomError("CHATCOM_E_SHOW_NOT_FOUND", f"'{slug}' is not a show slug (lower-case letters, digits and dashes)",
+                               "Run `chatcom shows` to list shows.", context={"shows": shows})
         s = store.Show(slug)
         if not s.exists():
             raise ChatcomError("CHATCOM_E_SHOW_NOT_FOUND", f"no show '{slug}' in {store.home()}",
@@ -114,7 +117,7 @@ def new_show(export: str, setup: dict, *, tz: str, max_unparsed: float = MAX_UNP
     no_cast = [_match_member(n, senders) for n in setup.get("no_cast", [])]
     no_photo = [_match_member(n, senders) for n in setup.get("no_photo", [])]
     photos = {_match_member(k, senders): v for k, v in setup.get("photos", {}).items()}
-    first = window_ops.select(res.messages, None, exclude=exclude)
+    first = window_ops.select(res.messages, None, exclude=exclude, aliases=setup.get("aliases"))
     counts = ranking_counts(first.messages)
     cast, chorus = bible_ops.pick_cast(counts, cast=cast_req, no_cast=no_cast, exclude=exclude)
     bible = bible_ops.new_bible(slug=slug, title=setup.get("title"), look=setup.get("look", "sitcom"),
@@ -129,6 +132,7 @@ def new_show(export: str, setup: dict, *, tz: str, max_unparsed: float = MAX_UNP
         store.write_json(show.bible_path, bible)
     log.write(f"created show {slug}: cast {cast}, chorus {len(chorus)}")
     return show, {"slug": slug, "cast": cast, "chorus": chorus, "masked": len(res.masked),
+                  "unparsed_rate": res.unparsed_rate,
                   "format": res.fmt, "messages": len(res.messages), "first_window": first.log_entry()}
 
 
@@ -146,6 +150,14 @@ def _load(show: store.Show) -> tuple[dict, dict, dict]:
     return bible, sheet, setup
 
 
+def _aware(dt: datetime | None, tz: str) -> datetime | None:
+    """--since/--until without an offset are in the show's zone."""
+    if dt is None or dt.tzinfo is not None:
+        return dt
+    from zoneinfo import ZoneInfo
+    return dt.replace(tzinfo=ZoneInfo(tz))
+
+
 def ingest(show: store.Show, export: str, *, confirmed: bool, mode: str, since: datetime | None = None,
            until: datetime | None = None, bottle: bool = False, max_days: int = window_ops.MAX_DAYS,
            max_unparsed: float = MAX_UNPARSED) -> tuple[Path, window_ops.Window, dict]:
@@ -157,9 +169,12 @@ def ingest(show: store.Show, export: str, *, confirmed: bool, mode: str, since: 
                            recovery="ask", context={"mode": mode})
     log = store.RunLog(show, f"ingest {Path(export).name}")
     with show.lock():
-        res, _ = _parse_export(export, bible["show"]["timezone"], setup.get("aliases", {}), max_unparsed, log, show)
-        win = window_ops.select(res.messages, bible_ops.last_cursor(bible), since=since, until=until,
-                                max_days=max_days, bottle=bottle, exclude=exclude)
+        bible, sheet, setup = _load(show)  # re-read under the lock
+        tz = bible["show"]["timezone"]
+        res, _ = _parse_export(export, tz, setup.get("aliases", {}), max_unparsed, log, show)
+        win = window_ops.select(res.messages, bible_ops.last_cursor(bible), since=_aware(since, tz),
+                                until=_aware(until, tz), max_days=max_days, bottle=bottle,
+                                exclude=setup.get("exclude", []), aliases=setup.get("aliases"))
         code = bible_ops.current_code(bible)
         sp = show.state_path(code)
         if sp.exists():
@@ -169,8 +184,11 @@ def ingest(show: store.Show, export: str, *, confirmed: bool, mode: str, since: 
                                    f"Restart the episode with `chatcom rewrite {show.slug} --episode {code}` "
                                    "(arrives with the render step), or delete its folder.",
                                    context={"stage": st["stage"], "folder": str(show.episode_dir(code))})
+        # A re-ingest before the draft is accepted starts the episode over, with
+        # fresh writer attempts: this is the "rerun the skill" recovery.
         st = state_ops.new(code, win.log_entry(), mode, store.now())
         st["bottle_requested"] = bottle
+        st["unparsed_rate"] = round(res.unparsed_rate, 4)
         ep = show.episode_dir(code)
         store.write_jsonl(ep / "messages.jsonl", win.messages)
         store.write_json(sp, st)
@@ -188,6 +206,14 @@ def _current_state(show: store.Show, bible: dict) -> tuple[str, dict]:
 
 
 def write_prep(show: store.Show, *, token_budget: int = ranking.DEFAULT_TOKEN_BUDGET) -> Path:
+    log = store.RunLog(show, "write-prep")
+    with show.lock():
+        path = _write_prep_locked(show, token_budget)
+    log.write(f"bundle {path}")
+    return path
+
+
+def _write_prep_locked(show: store.Show, token_budget: int) -> Path:
     bible, sheet, _ = _load(show)
     code, st = _current_state(show, bible)
     state_ops.require(st, "ingested")
@@ -217,9 +243,10 @@ def submit(show: store.Show, beats_doc, *, model: str, mode: str, draft_path: Pa
     """Validate a writer draft. Valid: beats.json and bible.next.json are written
     and the episode moves to `drafted`. Invalid: the attempt is recorded and the
     errors are raised (exit 2), or exit 4 on the third failure."""
-    bible, sheet, _ = _load(show)
-    code, st = _current_state(show, bible)
+    log = store.RunLog(show, f"write-submit mode={mode} model={model}")
     with show.lock():
+        bible, sheet, _ = _load(show)  # read under the lock: a concurrent submit cannot be lost
+        code, st = _current_state(show, bible)
         state_ops.require(st, "ingested")
         state_ops.check_attempts_left(st, str(draft_path) if draft_path else None)
         new_msgs = st["window"]["message_count"]
@@ -228,6 +255,7 @@ def submit(show: store.Show, beats_doc, *, model: str, mode: str, draft_path: Pa
         if errs:
             st = state_ops.record_attempt(st, ok=False, errors=errs, model=model, now=store.now())
             store.write_json(show.state_path(code), st)
+            log.write(f"{code}: attempt {st['attempts']} invalid ({len(errs)} problems)")
             if st["attempts"] >= state_ops.MAX_WRITER_ATTEMPTS:
                 state_ops.check_attempts_left(st, str(draft_path) if draft_path else None)
             raise ChatcomError("CHATCOM_E_BEATS_INVALID",
@@ -243,6 +271,7 @@ def submit(show: store.Show, beats_doc, *, model: str, mode: str, draft_path: Pa
         store.write_json(ep / "bible.next.json", nxt)
         st = state_ops.advance(st, "drafted", store.now())
         store.write_json(show.state_path(code), st)
+        log.write(f"{code}: drafted in {st['attempts']} attempt(s)")
     return {"episode": code, "beats": str(ep / "beats.json"), "bible_next": str(ep / "bible.next.json"),
             "attempts": st["attempts"], "model": model}
 
@@ -284,14 +313,16 @@ def dry_run(show: store.Show, export: str, *, since=None, until=None, bottle=Fal
     bible, sheet, setup = _load(show)
     log = store.RunLog(show, f"episode --dry-run {Path(export).name}")
     res, _ = _parse_export(export, bible["show"]["timezone"], setup.get("aliases", {}), max_unparsed, log, show)
-    win = window_ops.select(res.messages, bible_ops.last_cursor(bible), since=since, until=until,
-                            max_days=max_days, bottle=bottle, exclude=setup.get("exclude", []))
+    tz = bible["show"]["timezone"]
+    win = window_ops.select(res.messages, bible_ops.last_cursor(bible), since=_aware(since, tz),
+                            until=_aware(until, tz), max_days=max_days, bottle=bottle,
+                            exclude=setup.get("exclude", []), aliases=setup.get("aliases"))
     b = bundle_ops.build(bible, sheet, win.messages, token_budget=token_budget)
     prompt_tokens = len(bundle_ops.render_prompt(b)) // 4 + len(bundle_ops.brief()) // 4
     return {"episode": b["episode"], "window": win.log_entry(), "excluded_messages": win.excluded,
             "sampling": b["sampling"], "writer_input_tokens_estimate": prompt_tokens,
             "image_calls_planned": "0 now; new locations are known after the writer (at most 2)",
-            "format": res.fmt}
+            "format": res.fmt, "unparsed_rate": round(res.unparsed_rate, 4)}
 
 
 def setup_template() -> dict:

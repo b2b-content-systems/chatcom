@@ -126,7 +126,8 @@ def windowed(bible: dict) -> dict:
     return {
         "show": {k: bible["show"][k] for k in ("title", "look", "season", "next_episode", "operator_sender")},
         "episode": current_code(bible),
-        "cast": bible["cast"],
+        # aliases stay local: they often hold phone numbers the writer never needs
+        "cast": [{k: v for k, v in m.items() if k != "aliases"} for m in bible["cast"]],
         "chorus": bible["chorus"],
         "jokes": jokes[:JOKES_IN_WINDOW],
         "storylines": [s for s in bible["storylines"] if s["status"] == "open"],
