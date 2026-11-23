@@ -13,15 +13,20 @@ it and import that file instead."""
 from __future__ import annotations
 
 import json
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from chatcom.adapters import images as image_ops, store, transcript
 from chatcom.adapters.readers.base import cached_read
+from chatcom.adapters.readers.gemini import ReadTooLong
 from chatcom.adapters.source import ParseResult
 from chatcom.core import screens
 from chatcom.core.errors import ChatcomError
+
+PARALLEL = 3
+MAX_SPLITS = 2
 
 
 def load(paths: list[Path], ctx) -> tuple[ParseResult, str]:
@@ -37,11 +42,40 @@ def load(paths: list[Path], ctx) -> tuple[ParseResult, str]:
          "captured": e.captured.isoformat(timespec="seconds"), "captured_from": e.captured_from} for e in entries],
         "copies": copies})
     reader = shots["reader"]
-    reads = []
-    for c in copies:
-        doc = cached_read(reader, work / "images" / c["file"], c, shots.get("cache_dir"))
-        reads.append(screens.Image(c["file"], datetime.fromisoformat(c["captured"]).date(), doc["rows"],
-                                   doc.get("chat_name")))
+    folder = work / "images"
+
+    cache_dir = shots.get("cache_dir")
+
+    def read_one(c: dict, depth: int = 0) -> screens.Image:
+        marker = cache_dir / f"{c['sha256']}-too-long" if cache_dir else None
+        try:
+            if marker is not None and marker.exists():
+                raise ReadTooLong(c["file"])  # known from an earlier run: split without paying for it again
+            doc = cached_read(reader, folder / c["file"], c, cache_dir)
+        except ReadTooLong:
+            if depth >= MAX_SPLITS:
+                raise ChatcomError("CHATCOM_E_READER_GAVE_UP", f"{c['image']} holds more text than a read can "
+                                   "return, even split", "Take that part of the chat in shorter screenshots.",
+                                   recovery="ask", side_effects="partial", context={"image": c["image"]}) from None
+            if marker is not None:
+                marker.parent.mkdir(parents=True, exist_ok=True)
+                marker.write_text("1")
+            top, bottom = (read_one(h, depth + 1) for h in image_ops.split_copy(c, folder))
+            # the halves are one screenshot again before the join, so order rules see one image
+            return screens.merge_halves(top, bottom)
+        return screens.Image(c["file"], datetime.fromisoformat(c["captured"]).date(), doc["rows"],
+                             doc.get("chat_name"))
+
+    # up to 3 reads at once; results keep manifest order. On the first error the reads not yet started are
+    # cancelled, so a failing import stops paying; reads already done are in the cache for the retry.
+    pool = ThreadPoolExecutor(max_workers=PARALLEL if reader.mode != "replay" else 1)
+    futures = [pool.submit(read_one, c) for c in copies]
+    try:
+        reads = [f.result() for f in futures]
+    except BaseException:
+        pool.shutdown(wait=True, cancel_futures=True)
+        raise
+    pool.shutdown(wait=True)
     joined = screens.join(reads, tz=ZoneInfo(ctx.tz), operator=shots["operator"], speakers=shots.get("speakers"),
                           reverse=shots.get("reverse"), anchor=shots.get("anchor"))
     msgs = [{"sender": m["label"], "time": m["time"], "time_precision": m["time_precision"], "text": m["text"],
@@ -61,5 +95,12 @@ def load(paths: list[Path], ctx) -> tuple[ParseResult, str]:
     res.group_name = joined.chat_name
     res.fmt = {"images": len(entries), "copies": len(copies), "order": "newest first" if joined.reversed else "as given",
                "reader": reader.model}
-    res.artifacts = {"transcript": str(path), "workdir": str(work)}
+    res.artifacts["reader_calls"] = getattr(reader, "calls", 0)
+    answered = getattr(reader, "answered_by", None)
+    if answered:  # name the models that really answered (a fallback may have read everything)
+        res.artifacts["reader_answered"] = dict(answered)
+        res.fmt["reader"] = ", ".join(f"{m} x{n}" for m, n in answered.most_common())
+    if getattr(reader, "fallbacks", None):
+        res.artifacts["reader_fallbacks"] = list(reader.fallbacks)
+    res.artifacts.update({"transcript": str(path), "workdir": str(work)})
     return res, joined.chat_name or "Screenshots"

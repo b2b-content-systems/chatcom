@@ -333,14 +333,6 @@ def test_a_dry_run_lists_screenshots_and_never_reads_them(capsys, lake_show, tmp
     assert [i["name"] for i in info["images"]] == ["IMG_0001.PNG", "IMG_0002.PNG", "IMG_0003.PNG"]
 
 
-def test_cli_mode_cannot_read_yet_and_refuses_before_any_notice(capsys, lake_show, tmp_path, not_a_tty):
-    shots = _shots(tmp_path)
-    inbox = lake_show.inbox / "shots"
-    shutil.copytree(shots, inbox)
-    code, _, err = run(capsys, "--json", "episode", "lake-house", "--export", str(inbox), "--accept-data-flow")
-    assert code == 2 and "CLI mode" in json.loads(err)["what"]
-
-
 # ---- the stage table (deferred from PR 1, D2) -------------------------------------------------------
 # Value: protects=random command sequences never reach an undefined stage and never write the bible before
 # committed; fails_when=a transition skips a stage or a command writes bible.json; why_new=spec "Tests that must

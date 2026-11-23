@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "chatcom"
-version = "0.1.0.dev5"
+version = "0.1.0.dev6"
 description = "Turn your group chat into your favorite TV series: an episode starring your friends."
 readme = "README.md"
 license = { text = "MIT" }

@@ -65,10 +65,19 @@ def _shot_flags(p: argparse.ArgumentParser, *, reading: bool) -> None:
         p.add_argument("--replay-reads", help="screenshots: recorded reads (with --writer replay)")
 
 
+_MODEL_ID = __import__("re").compile(r"^[a-z0-9][a-z0-9.\-]{0,63}$")
+
+
+def _model_id(s: str) -> str:
+    if not _MODEL_ID.match(s):
+        raise argparse.ArgumentTypeError(f"not a model id: {s!r} (for example gemini-3.8-flash)")
+    return s
+
+
 def _shots(args) -> dict:
     return {"speakers": dict(args.speaker), "max_images": args.max_images,
             "reverse": getattr(args, "reverse", None), "anchor": getattr(args, "anchor_date", None),
-            "replay_reads": getattr(args, "replay_reads", None)}
+            "replay_reads": getattr(args, "replay_reads", None), "reader_model": getattr(args, "reader_model", None)}
 
 
 def _pair(s: str) -> tuple[str, str]:
@@ -107,6 +116,8 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--writer", choices=["anthropic", "replay", "session"], default="anthropic",
                    help="screenshots: the mode, which picks the reader and the notice")
     _shot_flags(s, reading=True)
+    s.add_argument("--reader-model", type=_model_id, help="screenshots in CLI mode: the Gemini model that reads them "
+                                          "(default gemini-3.6-flash, then gemini-3.8-flash)")
 
     for name, hlp in (("ingest", "(skill mode) step 1 prints the data-flow notice and exits 6; step 2 hands over messages"),
                       ("episode", "make this week's episode (this release stops after the writer: beats.json)")):
@@ -131,6 +142,8 @@ def build_parser() -> argparse.ArgumentParser:
             e.add_argument("--replay", help="recorded writer responses (with --writer replay)")
             e.add_argument("--dry-run", action="store_true")
             e.add_argument("--token-budget", type=int, default=12_000)
+            e.add_argument("--reader-model", type=_model_id, help="screenshots in CLI mode: the Gemini model that reads them "
+                                                  "(default gemini-3.6-flash, then gemini-3.8-flash)")
             e.add_argument("--review", action="store_true",
                            help="screenshots: stop after transcript.txt so you can check it, then import that file")
 
@@ -281,14 +294,12 @@ def cmd_episode(args) -> int:
         confirmed = True
     else:
         images = app.source_of(args.export, args.source) == "screenshots"
-        if images:
-            app.shot_context(_shots(args), "anthropic", "", Path("."))  # refuses until the CLI reader exists
         from chatcom.adapters.writers.anthropic import AnthropicWriter
         writer = AnthropicWriter(model=args.writer_model)
         confirmed = args.accept_data_flow
         if not confirmed:
             setup = app.store.read_json(show.setup_path) if show.setup_path.exists() else {}
-            text = app.notice("anthropic", setup.get("exclude", []))
+            text = app.notice("anthropic", setup.get("exclude", []), images=images)
             if not _tty():
                 raise ChatcomError("CHATCOM_E_AWAITING_CONFIRMATION", text,
                                    "Ask the operator. If they agree, run the same command with --accept-data-flow.",
@@ -312,7 +323,9 @@ def cmd_episode(args) -> int:
         print(f"warning {win.warning['code']}: {win.warning['what']}. fix: {win.warning['fix']}", file=sys.stderr)
     res = app.run_writer(show, writer, token_budget=args.token_budget)
     # Writer calls are billed only in CLI mode with your key; replay costs nothing.
-    billed = res["attempts"] if writer.mode == "anthropic" else 0
+    st_now = app.store.read_json(show.state_path(res["episode"]))
+    # billed to the operator's own keys: writer attempts plus any Gemini screenshot reads
+    billed = (res["attempts"] + st_now.get("reader_calls", 0)) if writer.mode == "anthropic" else 0
     emit(args, {"episode_path": res["beats"], "stage": "drafted", "model": res["model"], "calls_billed": billed,
                 "attempts": res["attempts"], "bible_next": res["bible_next"], "source": win_source(show, res)},
          [f"{res['episode']} drafted by {res['model']} in {res['attempts']} attempt(s) "

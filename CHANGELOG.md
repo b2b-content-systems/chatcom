@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.1.0.dev6 (2026-11-23)
+
+Any group chat, PR 6 of 7: CLI mode reads screenshots.
+
+### Added
+- The Gemini reader: each screenshot copy goes to `gemini-3.6-flash` with your own `GEMINI_API_KEY`
+  (`gemini-3.8-flash` when that model is gone, Claude with your `ANTHROPIC_API_KEY` when Gemini cannot answer),
+  one image per call with the read schema as `responseJsonSchema`; Gemini 3.x calls send `thinkingLevel: low` and
+  never `temperature`, `topP` or `topK`.
+- Up to 3 reads at once; a read that does not match the schema is asked for again with the problems listed
+  (3 tries per image, then `CHATCOM_E_READER_GAVE_UP`); a reply cut off at the token limit is split into halves
+  without spending a try; `CHATCOM_E_READER_UNAVAILABLE` (exit 4) when no reader can answer.
+- `--reader-model` on `new` and `episode`; `calls_billed` counts screenshot reads.
+- llm-fallback (vendored, upstream b2b-content-systems/llm-fallback#1): images, JSON schemas, finish reasons,
+  `ModelGone` for a model id that no longer exists.
+
 ## 0.1.0.dev5 (2026-11-23)
 
 Any group chat, PR 5 of 7: the SessionReader (skill mode reads screenshots).

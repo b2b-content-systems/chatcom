@@ -63,7 +63,7 @@ def source_of(export, source: str | None = None) -> str:
     return registry.sniff(registry.expand(_exports(export)), source).name
 
 
-def _reader(mode: str, replay_reads: str | None):
+def _reader(mode: str, replay_reads: str | None, reader_model: str | None = None):
     if mode == "replay":
         if not replay_reads:
             raise ChatcomError("CHATCOM_E_USAGE", "screenshots with --writer replay need --replay-reads FILE",
@@ -72,9 +72,8 @@ def _reader(mode: str, replay_reads: str | None):
         return ReplayReader(replay_reads)
     if mode == "session":
         return None  # the session reads them itself: read-prep / read-submit (reading.py)
-    raise ChatcomError("CHATCOM_E_USAGE", "this chatcom cannot read screenshots in CLI mode yet",
-                       "Type or paste the chat as a transcript (docs/transcript-format.md); the Gemini reader arrives "
-                       "in a later release.")
+    from chatcom.adapters.readers.gemini import GeminiReader
+    return GeminiReader(model=reader_model)  # the operator's own GEMINI_API_KEY (and ANTHROPIC_API_KEY to fall back)
 
 
 def shot_context(opts: dict | None, mode: str, operator: str, workdir: Path, cache_dir: Path | None = None) -> dict:
@@ -82,7 +81,7 @@ def shot_context(opts: dict | None, mode: str, operator: str, workdir: Path, cac
     copies go. `opts` carries the CLI flags (speakers, reverse, anchor,
     max_images, replay_reads)."""
     opts = dict(opts or {})
-    reader = _reader(mode, opts.pop("replay_reads", None))
+    reader = _reader(mode, opts.pop("replay_reads", None), opts.pop("reader_model", None))
     # Recorded reads are never cached: a cache entry would outlive the file and could pose as a real read.
     cache = None if reader.mode == "replay" else cache_dir
     return {"reader": reader, "workdir": workdir, "operator": operator, "cache_dir": cache, **opts}
@@ -188,8 +187,8 @@ def new_show(export, setup: dict, *, tz: str, max_unparsed: float = MAX_UNPARSED
                                "Ask the operator. If they agree, run the same command with --accept-data-flow.",
                                recovery="ask", context={"mode": writer, "notice": text})
         work = store.home() / "imports" / log.run_id
-        # the read cache lives with the copies, so it moves into the show (or is removed) with them
-        shot_ctx = shot_context(shots, writer, setup["operator_sender"], work, work / "cache")
+        # reads for a show not made yet: kept if `new` fails (a retry never pays twice), moved into the show
+        shot_ctx = shot_context(shots, writer, setup["operator_sender"], work, NEW_READ_CACHE())
     try:
         return _new_show(exports, setup, tz, max_unparsed, log, key, source, thread, shot_ctx)
     except BaseException:
@@ -198,6 +197,24 @@ def new_show(export, setup: dict, *, tz: str, max_unparsed: float = MAX_UNPARSED
             import shutil
             shutil.rmtree(shot_ctx["workdir"], ignore_errors=True)
         raise
+
+
+def NEW_READ_CACHE() -> Path:
+    return store.home() / "imports" / "cache"
+
+
+def _adopt_reads(import_dir: Path, show_cache: Path) -> None:
+    """Move the cached reads of this import's copies from the new-show cache
+    into the show's own cache."""
+    if not NEW_READ_CACHE().exists():
+        return
+    import hashlib
+    # every image file of the import: the copies and any halves a too-long read was split into
+    shas = {hashlib.sha256(f.read_bytes()).hexdigest() for f in (import_dir / "images").glob("*.png")}
+    for f in NEW_READ_CACHE().iterdir():  # reads and too-long markers
+        if f.name.split("-", 1)[0] in shas:
+            show_cache.mkdir(parents=True, exist_ok=True)
+            f.rename(show_cache / f.name)
 
 
 def _pending_dir(exports: list) -> Path | None:
@@ -247,10 +264,11 @@ def _new_show(exports, setup, tz, max_unparsed, log, key, source, thread, shot_c
     sheet = bible_ops.new_cast_sheet(bible, photos)
     show.create_dirs()
     export_paths = [str(Path(e).expanduser().resolve()) for e in exports]
-    if shot_ctx is not None:  # the copies and the transcript move in with the show
+    if shot_ctx is not None:  # the copies, the transcript and their cached reads move in with the show
         dest = show.dir / "imports" / log.run_id
         dest.parent.mkdir(parents=True, exist_ok=True)
         Path(shot_ctx["workdir"]).rename(dest)
+        _adopt_reads(dest, show.dir / "cache" / "reads")
     if pending is not None:  # a skill-mode import's transcript: its copies and reads move in too
         dest = show.dir / "imports" / pending.name
         dest.parent.mkdir(parents=True, exist_ok=True)
@@ -365,7 +383,7 @@ def ingest(show: store.Show, export, *, accepted: bool, mode: str, since: dateti
         check_session_paths(show, setup, exports, also=[own] if own else [])
     images = source_of(exports, source) == "screenshots"
     if images:
-        _reader(mode, (shots or {}).get("replay_reads"))  # refuse a mode that cannot read yet, before consent
+        _reader(mode, (shots or {}).get("replay_reads"), (shots or {}).get("reader_model"))  # refuse early
     if not accepted:
         text = notice(mode, exclude, images=images)
         raise ChatcomError("CHATCOM_E_AWAITING_CONFIRMATION", text,
@@ -422,6 +440,8 @@ def ingest(show: store.Show, export, *, accepted: bool, mode: str, since: dateti
             st = state_ops.new(code, None, mode, store.now(), stage="read", reader=shot_ctx["reader"].mode)
             st["source"] = "screenshots"
             st["transcript"] = res.artifacts["transcript"]
+            if res.artifacts.get("reader_calls"):
+                st["reader_calls"] = res.artifacts["reader_calls"]  # paid reads count even when review stops here
             store.write_json(sp, st)
             log.write(f"{code}: screenshots read, stopped for review at {st['transcript']}")
             return Path(st["transcript"]), None, st
@@ -440,6 +460,13 @@ def ingest(show: store.Show, export, *, accepted: bool, mode: str, since: dateti
         st["unparsed_rate"] = round(res.unparsed_rate, 4)
         st["source"] = res.adapter
         st["resume"] = {"method": win.method, "warning": win.warning}
+        continuing = bool(prior and prior["stage"] == "read" and prior.get("transcript") and
+                          all(Path(e).expanduser().resolve() == Path(prior["transcript"]).resolve() for e in exports))
+        calls = res.artifacts.get("reader_calls") or (prior.get("reader_calls") if continuing else 0)
+        if calls:  # billed to the operator's own Gemini key; only a continued --review import keeps its count
+            st["reader_calls"] = calls
+        if res.artifacts.get("reader_answered"):
+            st["reader_answered"] = res.artifacts["reader_answered"]
         ep = show.episode_dir(code)
         store.write_jsonl(ep / "messages.jsonl", win.messages)
         store.write_json(sp, st)
@@ -687,7 +714,8 @@ def doctor() -> list[tuple[str, bool, str]]:
         rows.append(("CHATCOM_HOME writable", False, str(e)))
     rows.append(("ANTHROPIC_API_KEY (CLI writer)", bool(os.environ.get("ANTHROPIC_API_KEY")), "set" if os.environ.get("ANTHROPIC_API_KEY") else "not set; skill mode does not need it"))
     gem = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
-    rows.append(("GEMINI_API_KEY (casting, writer fallback)", bool(gem), "set" if gem else "not set; needed from casting on"))
+    rows.append(("GEMINI_API_KEY (screenshots in CLI mode, casting, writer fallback)", bool(gem),
+                 "set" if gem else "not set; needed for screenshots in CLI mode and from casting on"))
     for tool, why in (("node", "render (Next Step 4)"), ("ffmpeg", "encode (Next Step 4)")):
         path = shutil.which(tool)
         rows.append((f"{tool} for {why}", bool(path), path or "not found; not needed yet"))
