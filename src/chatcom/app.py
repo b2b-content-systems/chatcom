@@ -63,7 +63,7 @@ def source_of(export, source: str | None = None) -> str:
     return registry.sniff(registry.expand(_exports(export)), source).name
 
 
-def _reader(mode: str, replay_reads: str | None):
+def _reader(mode: str, replay_reads: str | None, reader_model: str | None = None):
     if mode == "replay":
         if not replay_reads:
             raise ChatcomError("CHATCOM_E_USAGE", "screenshots with --writer replay need --replay-reads FILE",
@@ -72,9 +72,8 @@ def _reader(mode: str, replay_reads: str | None):
         return ReplayReader(replay_reads)
     if mode == "session":
         return None  # the session reads them itself: read-prep / read-submit (reading.py)
-    raise ChatcomError("CHATCOM_E_USAGE", "this chatcom cannot read screenshots in CLI mode yet",
-                       "Type or paste the chat as a transcript (docs/transcript-format.md); the Gemini reader arrives "
-                       "in a later release.")
+    from chatcom.adapters.readers.gemini import GeminiReader
+    return GeminiReader(model=reader_model)  # the operator's own GEMINI_API_KEY (and ANTHROPIC_API_KEY to fall back)
 
 
 def shot_context(opts: dict | None, mode: str, operator: str, workdir: Path, cache_dir: Path | None = None) -> dict:
@@ -82,7 +81,7 @@ def shot_context(opts: dict | None, mode: str, operator: str, workdir: Path, cac
     copies go. `opts` carries the CLI flags (speakers, reverse, anchor,
     max_images, replay_reads)."""
     opts = dict(opts or {})
-    reader = _reader(mode, opts.pop("replay_reads", None))
+    reader = _reader(mode, opts.pop("replay_reads", None), opts.pop("reader_model", None))
     # Recorded reads are never cached: a cache entry would outlive the file and could pose as a real read.
     cache = None if reader.mode == "replay" else cache_dir
     return {"reader": reader, "workdir": workdir, "operator": operator, "cache_dir": cache, **opts}
@@ -365,7 +364,7 @@ def ingest(show: store.Show, export, *, accepted: bool, mode: str, since: dateti
         check_session_paths(show, setup, exports, also=[own] if own else [])
     images = source_of(exports, source) == "screenshots"
     if images:
-        _reader(mode, (shots or {}).get("replay_reads"))  # refuse a mode that cannot read yet, before consent
+        _reader(mode, (shots or {}).get("replay_reads"), (shots or {}).get("reader_model"))  # refuse early
     if not accepted:
         text = notice(mode, exclude, images=images)
         raise ChatcomError("CHATCOM_E_AWAITING_CONFIRMATION", text,
@@ -440,6 +439,8 @@ def ingest(show: store.Show, export, *, accepted: bool, mode: str, since: dateti
         st["unparsed_rate"] = round(res.unparsed_rate, 4)
         st["source"] = res.adapter
         st["resume"] = {"method": win.method, "warning": win.warning}
+        if res.artifacts.get("reader_calls"):
+            st["reader_calls"] = res.artifacts["reader_calls"]  # billed to the operator's own Gemini key
         ep = show.episode_dir(code)
         store.write_jsonl(ep / "messages.jsonl", win.messages)
         store.write_json(sp, st)
@@ -687,7 +688,8 @@ def doctor() -> list[tuple[str, bool, str]]:
         rows.append(("CHATCOM_HOME writable", False, str(e)))
     rows.append(("ANTHROPIC_API_KEY (CLI writer)", bool(os.environ.get("ANTHROPIC_API_KEY")), "set" if os.environ.get("ANTHROPIC_API_KEY") else "not set; skill mode does not need it"))
     gem = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
-    rows.append(("GEMINI_API_KEY (casting, writer fallback)", bool(gem), "set" if gem else "not set; needed from casting on"))
+    rows.append(("GEMINI_API_KEY (screenshots in CLI mode, casting, writer fallback)", bool(gem),
+                 "set" if gem else "not set; needed for screenshots in CLI mode and from casting on"))
     for tool, why in (("node", "render (Next Step 4)"), ("ffmpeg", "encode (Next Step 4)")):
         path = shutil.which(tool)
         rows.append((f"{tool} for {why}", bool(path), path or "not found; not needed yet"))

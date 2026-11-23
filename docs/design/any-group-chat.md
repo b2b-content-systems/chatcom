@@ -286,7 +286,7 @@ cleared automatically, so there is no unlock command.
 | `--max-images` | new, ingest, episode | cap on images or tiles (default 40) | 4 |
 | `--replay-reads` | new, episode | recorded screenshot reads for the ReplayReader (CI, the demo) | 4 |
 | `--import` | read-prep, read-submit | a pending screenshot import from `new` in skill mode (no show yet) | 5 |
-| `--reader-model` | episode | override the reader model | 6 |
+| `--reader-model` | new, episode | override the reader model | 6 |
 <!-- /check_spec:flags -->
 
 ## Tests that must exist

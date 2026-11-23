@@ -13,15 +13,20 @@ it and import that file instead."""
 from __future__ import annotations
 
 import json
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from chatcom.adapters import images as image_ops, store, transcript
 from chatcom.adapters.readers.base import cached_read
+from chatcom.adapters.readers.gemini import ReadTooLong
 from chatcom.adapters.source import ParseResult
 from chatcom.core import screens
 from chatcom.core.errors import ChatcomError
+
+PARALLEL = 3
+MAX_SPLITS = 2
 
 
 def load(paths: list[Path], ctx) -> tuple[ParseResult, str]:
@@ -37,11 +42,23 @@ def load(paths: list[Path], ctx) -> tuple[ParseResult, str]:
          "captured": e.captured.isoformat(timespec="seconds"), "captured_from": e.captured_from} for e in entries],
         "copies": copies})
     reader = shots["reader"]
-    reads = []
-    for c in copies:
-        doc = cached_read(reader, work / "images" / c["file"], c, shots.get("cache_dir"))
-        reads.append(screens.Image(c["file"], datetime.fromisoformat(c["captured"]).date(), doc["rows"],
-                                   doc.get("chat_name")))
+    folder = work / "images"
+
+    def read_one(c: dict, depth: int = 0) -> list[screens.Image]:
+        try:
+            doc = cached_read(reader, folder / c["file"], c, shots.get("cache_dir"))
+        except ReadTooLong:
+            if depth >= MAX_SPLITS:
+                raise ChatcomError("CHATCOM_E_READER_GAVE_UP", f"{c['image']} holds more text than a read can "
+                                   "return, even split", "Take that part of the chat in shorter screenshots.",
+                                   recovery="ask", side_effects="partial", context={"image": c["image"]}) from None
+            return [img for half in image_ops.split_copy(c, folder) for img in read_one(half, depth + 1)]
+        return [screens.Image(c["file"], datetime.fromisoformat(c["captured"]).date(), doc["rows"],
+                              doc.get("chat_name"))]
+
+    # up to 3 reads at once; results keep manifest order
+    with ThreadPoolExecutor(max_workers=PARALLEL if reader.mode != "replay" else 1) as pool:
+        reads = [img for imgs in pool.map(read_one, copies) for img in imgs]
     joined = screens.join(reads, tz=ZoneInfo(ctx.tz), operator=shots["operator"], speakers=shots.get("speakers"),
                           reverse=shots.get("reverse"), anchor=shots.get("anchor"))
     msgs = [{"sender": m["label"], "time": m["time"], "time_precision": m["time_precision"], "text": m["text"],
@@ -61,5 +78,8 @@ def load(paths: list[Path], ctx) -> tuple[ParseResult, str]:
     res.group_name = joined.chat_name
     res.fmt = {"images": len(entries), "copies": len(copies), "order": "newest first" if joined.reversed else "as given",
                "reader": reader.model}
-    res.artifacts = {"transcript": str(path), "workdir": str(work)}
+    res.artifacts["reader_calls"] = getattr(reader, "calls", 0)
+    if getattr(reader, "fallbacks", None):
+        res.artifacts["reader_fallbacks"] = list(reader.fallbacks)
+    res.artifacts.update({"transcript": str(path), "workdir": str(work)})
     return res, joined.chat_name or "Screenshots"

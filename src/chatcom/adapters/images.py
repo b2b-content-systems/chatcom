@@ -308,3 +308,20 @@ def copy_all(entries: list[Entry], dest: Path, max_images: int = MAX_IMAGES) -> 
                             "captured": e.captured.isoformat(timespec="seconds"), "captured_from": e.captured_from,
                             "sha256": hashlib.sha256((dest / fname).read_bytes()).hexdigest()})
     return out
+
+
+def split_copy(copy: dict, folder: Path) -> list[dict]:
+    """Two overlapping halves of a copy (top and bottom), for a read that was
+    too long for one reply. Records like copy_all's, named <stem>a / <stem>b."""
+    src = folder / copy["file"]
+    dims = dimensions(src.read_bytes()[:32], "png")
+    if not dims or dims[1] < 32:
+        raise _unreadable(copy["image"], "the read was too long and the image is too small to split")
+    w, h = dims
+    half = int(h * (0.5 + TILE_OVERLAP / 2))
+    out = []
+    for tag, y in (("a", 0), ("b", h - half)):
+        name = f"{Path(copy['file']).stem}{tag}.png"
+        _encode(src, "png", folder / name, copy["image"], (w, half, 0, y))
+        out.append({**copy, "file": name, "sha256": hashlib.sha256((folder / name).read_bytes()).hexdigest()})
+    return out

@@ -4,9 +4,20 @@ Any chat app works through screenshots: Signal, Google Messages, Snapchat, Disco
 no export. CHATCOM reads each screenshot, joins them in order and drops what repeats where two screenshots
 overlap.
 
-**Status:** in Claude Code (skill mode) the session reads your screenshots: ask the skill to make a show from
-the folder. Reading them with Gemini (CLI mode) arrives in the next release; until then, CLI mode refuses
-screenshots, and you can paste or type the chat as a transcript ([transcript-format.md](transcript-format.md)).
+**Two ways to read them.** In Claude Code (skill mode) the session reads your screenshots. In CLI mode, Gemini
+reads them with your own `GEMINI_API_KEY` (`gemini-3.6-flash`, then `gemini-3.8-flash`), and Claude with your
+`ANTHROPIC_API_KEY` if Gemini cannot answer. CHATCOM has no keys of its own: you pay your provider for your reads.
+
+## In CLI mode
+
+```bash
+chatcom new ~/Desktop/lake-shots --operator "Dave" --accept-data-flow
+chatcom episode lake-house --export ~/Desktop/week2-shots --accept-data-flow
+```
+
+Up to 3 images are read at once. A read that does not match the format is asked for again (3 tries per image).
+A reply cut off at the token limit is split into two halves and read again, at no extra try. Reads are cached in
+the show, so a re-run never pays twice. `--reader-model` picks one Gemini model.
 
 ## In Claude Code
 

@@ -110,6 +110,11 @@ The screenshot reads failed their checks three times in each of three `read-prep
 images read so far are kept. Ask the operator: they can type or paste the chat as a transcript instead
 ([transcript-format.md](transcript-format.md)), or use CLI mode. Exit 4.
 
+## chatcom_e_reader_unavailable
+No reader could answer in CLI mode: Gemini (with your `GEMINI_API_KEY`) and then Claude (with your
+`ANTHROPIC_API_KEY`) both failed (no key, expired key, rate limit, outage). The error names each reason. Set a
+key and run the command again: reads already done are cached and not paid for twice. Exit 4.
+
 ## chatcom_e_export_outside_inbox
 In skill mode (`chatcom ingest` for the session writer, and `chatcom episode --dry-run` without a terminal) chatcom
 reads only the export given at `chatcom new` or files in the show's inbox (`~/.chatcom/<show>/inbox/`). Other
