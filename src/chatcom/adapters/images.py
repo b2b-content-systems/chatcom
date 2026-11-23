@@ -188,7 +188,13 @@ def image_files(paths: list[Path]) -> list[Path]:
     out: list[Path] = []
     for p in paths:
         if p.is_dir():
-            out += sorted(c for c in p.iterdir() if not c.name.startswith(".") and c.is_file())
+            for c in sorted(p.iterdir()):
+                if c.name.startswith("."):
+                    continue
+                if c.is_symlink():  # a link in the export folder could point at any file on disk
+                    raise _unreadable(c.name, "is a link to another file; put the screenshot itself in the folder")
+                if c.is_file():
+                    out.append(c)
         else:
             out.append(p)
     return out

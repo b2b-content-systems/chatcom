@@ -134,6 +134,17 @@ def build_parser() -> argparse.ArgumentParser:
             e.add_argument("--review", action="store_true",
                            help="screenshots: stop after transcript.txt so you can check it, then import that file")
 
+    r = sub.add_parser("read-prep", help="(skill mode) hand out the next screenshots to read; prints bundle.json")
+    r.add_argument("show", nargs="?")
+    r.add_argument("--import", dest="import_id", help="a pending import from `chatcom new` (no show yet)")
+    r = sub.add_parser("read-submit", help="(skill mode) check the session's reader.json; after the last batch, join")
+    r.add_argument("show", nargs="?")
+    r.add_argument("--import", dest="import_id", help="a pending import from `chatcom new` (no show yet)")
+    r.add_argument("--file", required=True)
+    r.add_argument("--model", required=True, help="the model that read the screenshots, as the session reports it")
+    r.add_argument("--review", action="store_true", help="stop after transcript.txt so the operator can check it")
+    _shot_flags(r, reading=True)
+
     w = sub.add_parser("write-prep", help="(skill mode) write the writer bundle and print its path")
     w.add_argument("show", nargs="?")
     w.add_argument("--token-budget", type=int, default=12_000)
@@ -205,6 +216,10 @@ def cmd_new(args) -> int:
     show, info = app.new_show(args.export, setup, tz=setup.get("timezone") or _local_tz(), max_unparsed=args.max_unparsed,
                               source=args.source, thread=args.thread, accepted=args.accept_data_flow,
                               writer=args.writer, shots=_shots(args))
+    if info.get("pending"):  # skill mode with screenshots: read them first, then the transcript makes the show
+        emit(args, info, [f"{info['images']} screenshots copied for reading (import {info['import']})",
+                          f"next: {info['next_command']}"])
+        return 0
     fmt = ", ".join(str(v) for v in info["format"].values() if v)
     lines = [f"show '{info['slug']}' created from {info['messages']} messages "
              f"({info['source']}: {fmt}; {info['unparsed_rate']:.1%} of lines unparsed)",
@@ -226,6 +241,12 @@ def cmd_ingest(args) -> int:
                                until=args.until, bottle=args.bottle, max_days=args.max_days,
                                max_unparsed=args.max_unparsed, source=args.source, thread=args.thread,
                                replace=args.replace, shots=_shots(args))
+    if win is None:  # screenshots: copied for the session to read
+        nxt = app.state_ops.next_command(st, show.slug)
+        emit(args, {"episode": st["episode"], "stage": st["stage"], "images": len(st["reader"]["copies"]),
+                    "next_command": nxt},
+             [f"{st['episode']}: {len(st['reader']['copies'])} screenshot copies ready to read", f"next: {nxt}"])
+        return 0
     lines = [f"{st['episode']}: {len(win.messages)} messages from {win.start:%Y-%m-%d %H:%M} to {win.end:%Y-%m-%d %H:%M} "
              f"(source {st['source']}, resumed by {win.method}; {st['unparsed_rate']:.1%} of lines unparsed)"]
     if win.gap:
@@ -330,6 +351,45 @@ def cmd_write_submit(args) -> int:
     return 0
 
 
+def _show_or_import(args):
+    if args.import_id and args.show:
+        raise ChatcomError("CHATCOM_E_USAGE", "pass a show or --import, not both",
+                           "A pending import from `chatcom new` has no show yet.")
+    return None if args.import_id else app.resolve_show(args.show)
+
+
+def cmd_read_prep(args) -> int:
+    path = app.read_prep(_show_or_import(args), args.import_id)
+    emit(args, {"bundle": str(path)}, [str(path)])
+    return 0
+
+
+def cmd_read_submit(args) -> int:
+    show = _show_or_import(args)
+    p = Path(args.file).expanduser()
+    try:
+        doc = json.loads(p.read_text("utf-8"))
+    except FileNotFoundError:
+        raise ChatcomError("CHATCOM_E_USAGE", f"no file at {p}", "Write reader.json first, then submit it.") from None
+    except json.JSONDecodeError as e:
+        doc = None
+        print(f"warning: {p.name} is not JSON (line {e.lineno}: {e.msg})", file=sys.stderr)
+    if len(args.model) > 100:
+        raise ChatcomError("CHATCOM_E_USAGE", "--model is over 100 characters", "Pass the model id, for example claude-opus-5-5.")
+    res = app.read_submit(show, doc, model=args.model, opts=_shots(args), import_id=args.import_id,
+                          review=args.review, draft=p)
+    if not res["done"]:
+        lines = [f"read {res['read']} of {res['images']} screenshots", f"next: {res['next_command']}"]
+    elif res["stage"] == "read":
+        lines = [f"all {res['images']} screenshots read and joined: {res['transcript']}",
+                 "check the transcript (fix any line), then run:", f"  {res['next_command']}", res["transcript"]]
+    else:
+        lines = [f"all {res['images']} screenshots read; {res['messages']} messages ingested "
+                 f"(resumed by {res['resume']})", f"next: {res['next_command']}", res["messages_path"]]
+    emit(args, res, lines)
+    return 0
+
+
 def cmd_status(args) -> int:
     info = app.status(app.resolve_show(args.show))
     lock = f"held by process {info['lock']['pid']} since {info['lock']['since']}" if info["lock"] else "free"
@@ -370,7 +430,7 @@ def cmd_doctor(args) -> int:
 
 
 COMMANDS = {"new": cmd_new, "ingest": cmd_ingest, "episode": cmd_episode, "write-prep": cmd_write_prep,
-            "write-submit": cmd_write_submit, "status": cmd_status, "migrate": cmd_migrate, "shows": cmd_shows,
+            "write-submit": cmd_write_submit, "read-prep": cmd_read_prep, "read-submit": cmd_read_submit, "status": cmd_status, "migrate": cmd_migrate, "shows": cmd_shows,
             "doctor": cmd_doctor}
 
 

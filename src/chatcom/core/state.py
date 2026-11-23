@@ -102,6 +102,8 @@ def next_command(state: dict | None, slug: str) -> str:
             return f"chatcom ingest {slug} --export {shlex.quote(state['transcript'])} --accept-data-flow"
         tail = f" --writer {mode}" + (" --replay <file>" if mode == "replay" else "")
         return f"chatcom episode {slug} --export {shlex.quote(state['transcript'])}{tail}"
+    if stage == "copied" and state.get("writer_mode") == "session":
+        return f"chatcom read-prep {slug}"
     if stage in ("copied", "read"):
         return f"chatcom {'ingest' if state.get('writer_mode') == 'session' else 'episode'} {slug} --export <file> --replace"
     if stage == "ingested":

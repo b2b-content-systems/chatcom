@@ -333,12 +333,10 @@ def test_a_dry_run_lists_screenshots_and_never_reads_them(capsys, lake_show, tmp
     assert [i["name"] for i in info["images"]] == ["IMG_0001.PNG", "IMG_0002.PNG", "IMG_0003.PNG"]
 
 
-def test_modes_that_cannot_read_yet_refuse_before_any_notice(capsys, lake_show, tmp_path, not_a_tty):
+def test_cli_mode_cannot_read_yet_and_refuses_before_any_notice(capsys, lake_show, tmp_path, not_a_tty):
     shots = _shots(tmp_path)
     inbox = lake_show.inbox / "shots"
     shutil.copytree(shots, inbox)
-    code, _, err = run(capsys, "--json", "ingest", "lake-house", "--export", str(inbox))
-    assert code == 2 and "skill mode" in json.loads(err)["what"]
     code, _, err = run(capsys, "--json", "episode", "lake-house", "--export", str(inbox), "--accept-data-flow")
     assert code == 2 and "CLI mode" in json.loads(err)["what"]
 
@@ -484,6 +482,41 @@ def test_unnamed_speakers_fail_closed_when_the_show_excludes_someone():
     assert e.value.code == "CHATCOM_E_SPEAKER_UNMAPPED" and "--speaker" in e.value.fix
     app.check_screenshot_exclusions({"exclude": []}, res)  # no exclusions: unnamed is fine
 
+
+
+# ---- PR 5: the join rules tracked from PR 4 review ------------------------------------------------
+# Value: protects=names never cross a gap; times never silently run backwards; fails_when=either rule is removed;
+# why_new=TODOS P1 from PR 4 review; seam=none; no_claim=reader accuracy
+
+def test_a_name_does_not_carry_across_a_gap():
+    a = img("1", [row("one", name="Mike"), row("two")])
+    b = img("2", [row("three"), row("four", name="Theo")])  # no overlap with image 1
+    j = S.join([a, b], tz=NY, operator="Dave", reverse=False)
+    assert [m["label"] for m in j.messages] == ["Mike", "Mike", "Speaker A", "Theo"]
+
+
+def test_times_that_run_backwards_stop_the_join():
+    rows = [{"type": "date", "text": "Today"}, row("a", name="Mike", time="19:30"), row("b", time="19:00")]
+    with pytest.raises(ChatcomError) as e:
+        S.join([img("1", rows)], tz=NY, operator="Dave")
+    assert "out of order" in e.value.what and "--reverse" in e.value.fix
+    ok = [{"type": "date", "text": "Today"}, row("a", name="Mike", time="19:30"), row("b", time="19:27")]
+    assert len(S.join([img("1", ok)], tz=NY, operator="Dave").messages) == 2  # a 3-minute slip is noise
+
+
+def test_past_midnight_without_a_header_is_the_next_day():
+    rows = [{"type": "date", "text": "Today"}, row("late", name="Mike", time="23:50"), row("later", time="00:10")]
+    m = S.join([img("1", rows)], tz=NY, operator="Dave").messages
+    assert m[0]["time"].startswith("2026-01-09T23:50") and m[1]["time"].startswith("2026-01-10T00:10")
+
+
+
+def test_a_header_between_rows_blocks_the_midnight_roll():
+    rows = [{"type": "date", "text": "Today"}, row("a", name="Mike", time="23:50"), {"type": "date", "text": "Today"},
+            row("b", time="00:10")]
+    with pytest.raises(ChatcomError) as e:
+        S.join([img("1", rows)], tz=NY, operator="Dave")
+    assert "out of order" in e.value.what
 
 
 def test_strip_png_keeps_only_the_pixels(tmp_path):

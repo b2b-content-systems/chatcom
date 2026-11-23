@@ -100,6 +100,16 @@ the newest ones, or raise the limit with `--max-images N`. Exit 2.
 This episode has a screenshot import that stopped part way (for example after `--review`). Continue it by
 importing the `transcript.txt` it wrote, or pass `--replace` to start the import over. Exit 2.
 
+## chatcom_e_read_invalid
+The session's `reader.json` does not match the read format: an image of the batch has no read, a field is
+missing or wrong, or a read is for an image not in this batch. The error lists each problem by JSON path. Fix
+every one and submit the whole file again. Three tries per `read-prep`. Exit 2.
+
+## chatcom_e_reader_gave_up
+The screenshot reads failed their checks three times in each of three `read-prep` rounds for one batch. The
+images read so far are kept. Ask the operator: they can type or paste the chat as a transcript instead
+([transcript-format.md](transcript-format.md)), or use CLI mode. Exit 4.
+
 ## chatcom_e_export_outside_inbox
 In skill mode (`chatcom ingest` for the session writer, and `chatcom episode --dry-run` without a terminal) chatcom
 reads only the export given at `chatcom new` or files in the show's inbox (`~/.chatcom/<show>/inbox/`). Other

@@ -71,9 +71,7 @@ def _reader(mode: str, replay_reads: str | None):
         from chatcom.adapters.readers.replay import ReplayReader
         return ReplayReader(replay_reads)
     if mode == "session":
-        raise ChatcomError("CHATCOM_E_USAGE", "this chatcom cannot read screenshots in skill mode yet",
-                           "Ask the person to paste the chat or type it as a transcript (docs/transcript-format.md); "
-                           "reading screenshots in the session arrives in a later release.")
+        return None  # the session reads them itself: read-prep / read-submit (reading.py)
     raise ChatcomError("CHATCOM_E_USAGE", "this chatcom cannot read screenshots in CLI mode yet",
                        "Type or paste the chat as a transcript (docs/transcript-format.md); the Gemini reader arrives "
                        "in a later release.")
@@ -167,6 +165,21 @@ def new_show(export, setup: dict, *, tz: str, max_unparsed: float = MAX_UNPARSED
     log = store.RunLog(None, f"new {Path(exports[0]).name}")
     key = store.new_key()
     shot_ctx = None
+    if setup.get("slug") and store.Show(setup["slug"]).exists():  # refuse before copying or reading anything
+        raise ChatcomError("CHATCOM_E_SHOW_EXISTS", f"a show '{setup['slug']}' already exists",
+                           f"Make this week's episode with `chatcom episode {setup['slug']} --export <file>`, "
+                           "or pass --show NEWSLUG.")
+    if source_of(exports, source) == "screenshots" and writer == "session":
+        # skill mode: copy now, the session reads them, the transcript makes the show
+        if not accepted:
+            text = notice(writer, setup.get("exclude", []), images=True)
+            raise ChatcomError("CHATCOM_E_AWAITING_CONFIRMATION", text,
+                               "Ask the operator. If they agree, run the same command with --accept-data-flow.",
+                               recovery="ask", context={"mode": writer, "notice": text})
+        from chatcom import reading
+        info = reading.start_pending(registry.expand(exports), setup, setup.get("timezone", tz), log.run_id,
+                                     (shots or {}).get("max_images") or 40, shots or {})
+        return None, {**info, "pending": True}
     if source_of(exports, source) == "screenshots":
         # Reading screenshots is a model call: consent comes first.
         if not accepted:
@@ -174,10 +187,6 @@ def new_show(export, setup: dict, *, tz: str, max_unparsed: float = MAX_UNPARSED
             raise ChatcomError("CHATCOM_E_AWAITING_CONFIRMATION", text,
                                "Ask the operator. If they agree, run the same command with --accept-data-flow.",
                                recovery="ask", context={"mode": writer, "notice": text})
-        if setup.get("slug") and store.Show(setup["slug"]).exists():  # refuse before reading anything
-            raise ChatcomError("CHATCOM_E_SHOW_EXISTS", f"a show '{setup['slug']}' already exists",
-                               f"Make this week's episode with `chatcom episode {setup['slug']} --export <file>`, "
-                               "or pass --show NEWSLUG.")
         work = store.home() / "imports" / log.run_id
         # the read cache lives with the copies, so it moves into the show (or is removed) with them
         shot_ctx = shot_context(shots, writer, setup["operator_sender"], work, work / "cache")
@@ -191,9 +200,26 @@ def new_show(export, setup: dict, *, tz: str, max_unparsed: float = MAX_UNPARSED
         raise
 
 
+def _pending_dir(exports: list) -> Path | None:
+    """The pending import folder when the export is its transcript."""
+    if len(exports) != 1:
+        return None
+    p = Path(exports[0]).expanduser().resolve()
+    root = (store.home() / "imports").resolve()
+    if p.name == "transcript.txt" and p.parent.parent == root and (p.parent / "import.json").is_file():
+        return p.parent
+    return None
+
+
 def _new_show(exports, setup, tz, max_unparsed, log, key, source, thread, shot_ctx):
     res, display = _parse_export(exports, setup.get("timezone", tz), setup.get("aliases", {}), max_unparsed, log,
                                  None, key=key, source=source, thread=thread, shots=shot_ctx)
+    if res.adapter == "screenshots":
+        check_screenshot_exclusions(setup, res)  # an excluded person never joins the cast as "Speaker A"
+    pending = _pending_dir(exports)
+    if pending is not None:  # a skill-mode import's transcript: name the show after the chat the session read
+        joined = store.read_json(pending / "join.json") if (pending / "join.json").exists() else {}
+        display = joined.get("chat_name") or "Screenshots"
     slug = setup.get("slug") or store.slugify(display)
     show = store.Show(slug)
     if show.exists():
@@ -220,12 +246,17 @@ def _new_show(exports, setup, tz, max_unparsed, log, key, source, thread, shot_c
                                 aliases=setup.get("aliases"))
     sheet = bible_ops.new_cast_sheet(bible, photos)
     show.create_dirs()
+    export_paths = [str(Path(e).expanduser().resolve()) for e in exports]
     if shot_ctx is not None:  # the copies and the transcript move in with the show
         dest = show.dir / "imports" / log.run_id
         dest.parent.mkdir(parents=True, exist_ok=True)
         Path(shot_ctx["workdir"]).rename(dest)
+    if pending is not None:  # a skill-mode import's transcript: its copies and reads move in too
+        dest = show.dir / "imports" / pending.name
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        pending.rename(dest)
+        export_paths = [str(dest / "transcript.txt")]
     with show.lock():
-        export_paths = [str(Path(e).expanduser().resolve()) for e in exports]
         store.write_json(show.setup_path, {**setup, "slug": slug, "exclude": exclude, "export_paths": export_paths})
         store.write_json(show.cast_path, sheet)
         store.write_json(show.bible_path, bible)
@@ -302,11 +333,12 @@ def check_screenshot_exclusions(setup: dict, res: ParseResult) -> None:
                            context={"unnamed": unnamed})
 
 
-def check_session_paths(show: store.Show, setup: dict, exports: list[str]) -> None:
+def check_session_paths(show: store.Show, setup: dict, exports: list[str], also: list[str] = ()) -> None:
     """In session mode the agent, not the operator, types the --export path. It
     may read only the export given at `new` or a file in the show's inbox, so
     an injected command cannot hand some other file to the model."""
-    allowed = {str(Path(p)) for p in setup.get("export_paths", [])}
+    # the export given at `new`, and the transcript this episode's screenshot import wrote
+    allowed = {str(Path(p).resolve()) for p in [*setup.get("export_paths", []), *also]}
     inbox = show.inbox.resolve()
     for e in exports:
         p = Path(e).expanduser().resolve()
@@ -328,7 +360,9 @@ def ingest(show: store.Show, export, *, accepted: bool, mode: str, since: dateti
     exclude = setup.get("exclude", [])
     exports = _exports(export)
     if mode == "session":
-        check_session_paths(show, setup, exports)
+        sp0 = show.state_path(bible_ops.current_code(bible))
+        own = (store.read_json(sp0).get("transcript") if sp0.exists() else None)
+        check_session_paths(show, setup, exports, also=[own] if own else [])
     images = source_of(exports, source) == "screenshots"
     if images:
         _reader(mode, (shots or {}).get("replay_reads"))  # refuse a mode that cannot read yet, before consent
@@ -360,6 +394,26 @@ def ingest(show: store.Show, export, *, accepted: bool, mode: str, since: dateti
                                    f"Continue it with --export {want}, or pass --replace to start the import over."
                                    if want else "Pass --replace to start the import over.",
                                    context={"stage": prior["stage"], "transcript": want})
+        if images and mode == "session":
+            # skill mode: copy, then the session reads them (read-prep / read-submit)
+            from chatcom import reading
+            import shutil
+            dest = show.episode_dir(code) / "import"
+            fresh = dest.with_name("import.new")  # check and copy first; the old import goes only on success
+            shutil.rmtree(fresh, ignore_errors=True)
+            try:
+                copies = reading.copy_images(registry.expand(exports), fresh, (shots or {}).get("max_images") or 40)
+            except BaseException:
+                shutil.rmtree(fresh, ignore_errors=True)
+                raise
+            shutil.rmtree(dest, ignore_errors=True)
+            fresh.rename(dest)
+            st = state_ops.new(code, None, mode, store.now(), stage="copied", reader="session")
+            st["source"] = "screenshots"
+            st["reader"] = reading.reader_state(copies, shots or {})
+            store.write_json(sp, st)
+            log.write(f"{code}: {len(copies)} screenshot copies for the session to read")
+            return dest, None, st
         shot_ctx = (shot_context(shots, mode, bible["show"]["operator_sender"], show.episode_dir(code) / "import",
                                  show.dir / "cache" / "reads") if images else None)
         res, _ = _parse_export(exports, tz, setup.get("aliases", {}), max_unparsed, log, show, key=key,
@@ -478,6 +532,49 @@ def submit(show: store.Show, beats_doc, *, model: str, mode: str, draft_path: Pa
         log.write(f"{code}: drafted in {st['attempts']} attempt(s)")
     return {"episode": code, "beats": str(ep / "beats.json"), "bible_next": str(ep / "bible.next.json"),
             "attempts": st["attempts"], "model": model}
+
+
+def _read_target(show: store.Show | None, import_id: str | None):
+    from chatcom import reading
+    if import_id:
+        return reading.pending_target(import_id)
+    bible, _, _ = _load(show)
+    code = bible_ops.current_code(bible)
+    return reading.Target(show.episode_dir(code) / "import", show.state_path(code), bible["show"]["timezone"],
+                          bible["show"]["operator_sender"], show.slug, show)
+
+
+def read_prep(show: store.Show | None, import_id: str | None = None) -> Path:
+    from chatcom import reading
+    t = _read_target(show, import_id)
+    if show is not None:
+        with show.lock():
+            return reading.prep(t)
+    return reading.prep(t)
+
+
+def read_submit(show: store.Show | None, doc, *, model: str, opts: dict, import_id: str | None = None,
+                review: bool = False, draft: Path | None = None) -> dict:
+    """One batch of session reads. After the last one: an existing show goes
+    on to `ingested` (or stops at `read` with --review); a pending import
+    prints the `chatcom new` command its transcript makes the show with."""
+    from chatcom import reading
+    t = _read_target(show, import_id)
+    if show is not None:
+        with show.lock():
+            res = reading.submit(t, doc, model=model, opts=opts, draft=draft)
+    else:
+        res = reading.submit(t, doc, model=model, opts=opts, draft=draft)
+    if not res["done"]:
+        return res
+    if show is None:
+        return {**res, "stage": "read", "next_command": reading.new_command(t)}
+    st = store.read_json(t.state_path)
+    if review:
+        return {**res, "stage": "read", "next_command": state_ops.next_command(st, show.slug)}
+    path, win, st = ingest(show, res["transcript"], accepted=True, mode="session")
+    return {**res, "stage": st["stage"], "messages_path": str(path), "messages": len(win.messages),
+            "resume": win.method, "warning": win.warning, "next_command": f"chatcom write-prep {show.slug}"}
 
 
 def status(show: store.Show) -> dict:
