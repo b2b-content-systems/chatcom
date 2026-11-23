@@ -77,7 +77,7 @@ Unknown IANA timezone. Exit 2.
 `chatcom ingest` without `--confirmed` always stops here and prints the data-flow notice. No message is read or shown. The skill relays the notice to the operator and continues only after they agree. Exit 6.
 
 ## chatcom_e_writer_gave_up
-The writer failed validation three times. Nothing was saved. Fixed message: "Writer step did not complete. Nothing was saved. Rerun the skill, or run `chatcom episode <show> --writer anthropic`." The last draft's path is in the context. Exit 4.
+The writer failed validation three times. Nothing was saved. Fixed message: "Writer step did not complete. Nothing was saved. Rerun the skill, or run `chatcom episode <show> --export <export> --writer anthropic`." The last draft's path is in the context. Exit 4.
 
 ## chatcom_e_writer_unavailable
 Neither Claude nor the Gemini fallback could answer (no key, expired key, rate limit, outage). The context names the env variables, never their values. Exit 4.

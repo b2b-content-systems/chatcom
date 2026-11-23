@@ -39,7 +39,7 @@ def check_attempts_left(state: dict, draft_path: str | None = None) -> None:
         raise ChatcomError("CHATCOM_E_WRITER_GAVE_UP",
                            f"the writer failed validation {state['attempts']} times for {state['episode']}",
                            "Writer step did not complete. Nothing was saved. Rerun the skill, or run "
-                           "`chatcom episode <show> --writer anthropic`.",
+                           "`chatcom episode <show> --export <export> --writer anthropic`.",
                            recovery="ask", context={"last_draft": draft_path, "errors": state["last_errors"]})
 
 

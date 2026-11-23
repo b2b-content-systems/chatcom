@@ -81,10 +81,14 @@ _ENCRYPTION = ("end-to-end encrypted", "ende-zu-ende-verschlüsselt", "cifrados 
 _PHONE = re.compile(r"^\+?[\d\s()\-‑.]{7,}$")
 # A phone number inside message text: 10+ digits with phone separators only
 # (dates and times have fewer digits or other separators).
-_PHONE_IN_TEXT = re.compile(r"(?<![\w+@/=.])(@?)(\+?\d[\d \u00a0()\-\u2011.]{6,}\d)(?![\w:/])")
+_PHONE_IN_TEXT = re.compile(r"(?<![\w@+])(@?)(\+?\d[\d \u00a0()\-\u2011.]*\d)(?!\w)")
 MIN_PHONE_DIGITS = 10
-MAX_PHONE_DIGITS = 15  # E.164; longer runs are ids, card or account numbers
-_ISO_DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
+MAX_PHONE_DIGITS = 15  # E.164
+# Spared only when clearly not a phone: a date (with or without a time after
+# it), a decimal, or part of a link. Everything else that looks like a phone is
+# masked: over-masking costs the writer a little, under-masking leaks.
+_DATE_LIKE = re.compile(r"^(\d{4}-\d{2}-\d{2}|\d{1,2}[./-]\d{1,2}[./-]\d{2,4})(\s+\d{1,2})?$")
+_DECIMAL = re.compile(r"^\d+\.\d+$")
 
 
 @dataclass
@@ -460,16 +464,31 @@ def mask_numbers(text: str, alias_map: dict[str, str]) -> str:
     """Phone numbers never leave in message text: a number with an alias
     becomes that name, any other becomes its stable 'Unnamed' label. A WhatsApp
     @mention of an unsaved contact is written as their number, so it maps to
-    the same label as their messages."""
+    the same label as their messages. Fails closed: when unsure, mask."""
+    def one(at: str, number: str) -> str | None:
+        n = len(_digits(number))
+        grouped = number.startswith("+") or len(re.split(r"[^\d]+", number.lstrip("+"))) >= 3
+        if n < (9 if grouped else MIN_PHONE_DIGITS) or _DATE_LIKE.match(number) or _DECIMAL.match(number):
+            return None
+        return at + (alias_map.get("#" + _phone_key(number)) or phone_label(number))
+
     def repl(m: re.Match) -> str:
         at, number = m.group(1), m.group(2)
-        n = len(_digits(number))
-        groups = re.split(r"[^\d]+", number.lstrip("+"))
-        grouped = number.startswith("+") or len(groups) >= 3
-        if re.fullmatch(r"\d+\.\d+", number):
-            return m.group(0)  # a decimal number
-        if (n < (9 if grouped else MIN_PHONE_DIGITS) or n > MAX_PHONE_DIGITS or _ISO_DATE.search(number)
-                or sum(len(g) == 1 for g in groups) > 1):
-            return m.group(0)  # a date, a list of numbers or a long id, not a phone
-        return at + (alias_map.get("#" + _phone_key(number)) or phone_label(number))
+        word_start = max(text.rfind(" ", 0, m.start()), text.rfind("\n", 0, m.start())) + 1
+        if "://" in text[word_start:m.start()] or "www." in text[word_start:m.start()]:
+            return m.group(0)  # an id inside a link
+        if len(_digits(number)) <= MAX_PHONE_DIGITS:
+            return one(at, number) or m.group(0)
+        # Longer than any phone: two numbers side by side, or an account
+        # number in groups. Mask each run of whitespace-separated parts that
+        # fits a phone's length.
+        chunks, cur = [], []
+        for t in number.split():
+            if cur and len(_digits(" ".join(cur + [t]))) > MAX_PHONE_DIGITS:
+                chunks.append(" ".join(cur))
+                cur = []
+            cur.append(t)
+        chunks.append(" ".join(cur))
+        return at + " ".join(one("", c) or c for c in chunks)
+
     return _PHONE_IN_TEXT.sub(repl, text) if text else text

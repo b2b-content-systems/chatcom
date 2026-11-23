@@ -22,7 +22,7 @@ person expects a video, and show them the sample episodes: https://b2b-content-s
   (under `~/.chatcom/` or `$CHATCOM_HOME`). Never read the raw export yourself, never open other files, never
   run another program.
 - **Consent first.** Never pass `--confirmed` until the person has seen the data-flow notice and said yes.
-- In a group the person does not trust, suggest CLI mode instead (`chatcom episode <show> --writer anthropic`):
+- In a group the person does not trust, suggest CLI mode instead (`chatcom episode <show> --export <export> --writer anthropic`):
   the chat then never enters this session.
 
 ## The fixed sequence
@@ -41,9 +41,11 @@ person expects a video, and show them the sample episodes: https://b2b-content-s
    `bundle.json`'s `write_to`.
 7. **Submit:** `chatcom write-submit <show> --file <beats.json path> --model <your model name>`.
    - Exit 0: tell the person the episode is drafted, with its title, TV Guide line and credits.
-   - Exit 2: it lists problems by JSON path. Fix every one and submit the whole file again.
+   - Exit 2 with `CHATCOM_E_BEATS_INVALID`: it lists problems by JSON path. Fix every one and submit the whole
+     file again. Any other exit-2 error (for example `CHATCOM_E_STATE` or `CHATCOM_E_LOCKED`) is not about the
+     draft: tell the person what its `fix:` line says and stop.
    - Exit 4: stop and say exactly: "Writer step did not complete. Nothing was saved. Rerun the skill, or run
-     `chatcom episode <show> --writer anthropic`."
+     `chatcom episode <show> --export <export> --writer anthropic`."
 
 Any other error prints a code and a `fix:` line; tell the person what it says. Never work around an error.
 

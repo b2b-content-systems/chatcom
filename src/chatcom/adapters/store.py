@@ -113,11 +113,14 @@ class Show:
             except FileExistsError:
                 try:
                     age = time.time() - path.stat().st_mtime
+                except FileNotFoundError:
+                    continue  # released between our create and our stat: try again
+                try:
                     raw = path.read_text().strip()
                 except FileNotFoundError:
-                    continue  # released between our create and our read: try again
+                    continue
                 except OSError:
-                    raw, age = "", 0.0
+                    raw = ""  # unreadable: judged by its age like an empty lock
                 pid = int(raw) if raw.isdigit() else 0
                 # An empty lock is one another run just created and has not
                 # written its pid into yet: held, unless it is old.

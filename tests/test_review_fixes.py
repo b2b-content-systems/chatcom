@@ -282,8 +282,8 @@ def test_store_writes_are_atomic_and_private(chatcom_home):
 
 
 # Value: protects=masking leaves dates, times, lists, URL ids and long account numbers alone; fails_when=the pattern widens back to any 10-digit run; why_new=the fix-check saw dates become 'Unnamed' people; seam=none; no_claim=every national phone format
-@pytest.mark.parametrize("text", ["meet 2024-01-15 10:30", "order 1 2 3 4 5 6 7 8 9 10",
-                                  "see https://x.com/status/1234567890123", "iban DE89 3704 0044 0532 0130 00"])
+@pytest.mark.parametrize("text", ["meet 2024-01-15 10:30", "meet 22.11.2026 10:30", "pi 3.14159265358",
+                                  "see https://x.com/status/1234567890123", "order 123456789"])
 def test_masking_spares_non_phone_numbers(text):
     assert whatsapp.mask_numbers(text, {}) == text
 
@@ -375,3 +375,34 @@ def test_corrupt_zip_member_is_a_coded_error(tmp_path):
     with pytest.raises(ChatcomError) as e:
         whatsapp.read_export(p)
     assert e.value.code in ("CHATCOM_E_EXPORT_ZIP", "CHATCOM_E_EXPORT_UNREADABLE")
+
+
+# Value: protects=masking fails closed: a phone followed by ':', after '=', next to another phone, or with trailing digits is still masked; fails_when=a spare rule widens and lets a number through; why_new=fix-check round 2 found these leaks; seam=none; no_claim=every national format
+@pytest.mark.parametrize("text", ["my cell 555-010-2233: text me", "phone=5550102233", "5550102233 5550104455",
+                                  "555-010-2233 2 3", "+34 612 345 678", "612 34 56 78"])
+def test_masking_fails_closed(text):
+    out = whatsapp.mask_numbers(text, {})
+    assert "Unnamed" in out
+    for d in ("0102233", "0104455", "612345678", "5550102233"):
+        assert d not in out.replace(" ", "").replace("-", "")
+
+
+# Value: protects=every chatcom command the skill tells a session to run parses with the real CLI; fails_when=a flag is renamed or made required and SKILL.md is not updated; why_new=fix-check found `episode --writer anthropic` without the required --export; seam=none; no_claim=the commands' runtime behavior
+def test_every_skill_command_parses():
+    import re as _re
+    from pathlib import Path
+    text = (Path(__file__).resolve().parent.parent / "skills" / "chatcom" / "SKILL.md").read_text("utf-8")
+    text += (Path(__file__).resolve().parent.parent / "src" / "chatcom" / "core" / "state.py").read_text("utf-8")
+    cmds = set(_re.findall(r"`chatcom ([^`]+)`", text))
+    assert len(cmds) >= 7
+    fill = {"<show>": "lake-house", "<export>": "x.zip", "<beats.json path>": "b.json", "<your model name>": "m",
+            "\"<their name in the chat>\"": "Dave", "\"<name>\"": "Sam",
+            "<sitcom|anime|cartoon80s|truecrime|cutscene|facetime|flipphone|reality>": "sitcom"}
+    parser = cli.build_parser()
+    for c in cmds:
+        for k, v in fill.items():
+            c = c.replace(k, v)
+        argv = c.split()
+        if argv == ["--version"]:
+            continue
+        parser.parse_args(argv)  # SystemExit here means the skill names a command that cannot run

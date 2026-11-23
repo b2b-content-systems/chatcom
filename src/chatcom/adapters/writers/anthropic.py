@@ -58,8 +58,8 @@ class AnthropicWriter:
         try:
             ans = llm_fallback.ask_gemini(prompt, system=system, model=self.gemini_model,
                                           max_tokens=MAX_TOKENS, transport=self.transport)
-        except (llm_fallback.Unavailable, llm_fallback.BadRequest) as e:
-            raise ChatcomError("CHATCOM_E_WRITER_UNAVAILABLE", redact(f"{reason}; Gemini: {e}")[:400],
+        except (llm_fallback.Unavailable, llm_fallback.BadRequest, ValueError, http.client.HTTPException) as e:
+            raise ChatcomError("CHATCOM_E_WRITER_UNAVAILABLE", redact(f"{reason}; Gemini: {type(e).__name__}: {e}")[:400],
                                "Check the API keys and billing for both providers.", recovery="ask",
                                context={"env": "ANTHROPIC_API_KEY, GEMINI_API_KEY"}) from None
         return Draft(ans.text, ans.model, reason)
