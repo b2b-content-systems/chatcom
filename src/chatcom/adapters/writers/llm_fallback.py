@@ -84,6 +84,7 @@ class Answer:
     tried: list[str] = field(default_factory=list)
     finish: str = "stop"  # stop | max_tokens | refused | other
     images: list["Image"] = field(default_factory=list)
+    reason: str | None = None  # the provider's own finish reason, e.g. Gemini's NO_IMAGE
 
     @property
     def cut_off(self) -> bool:
@@ -243,7 +244,8 @@ def ask_gemini(prompt: str, *, system: str | None = None, model: str = GEMINI_MO
         finish = "max_tokens"
     else:
         finish = "stop" if reason in (None, "STOP") else "other"
-    return Answer(text=text, model=body.get("modelVersion", model), provider="gemini", finish=finish, images=pics)
+    return Answer(text=text, model=body.get("modelVersion", model), provider="gemini", finish=finish, images=pics,
+                  reason=blocked or reason)
 
 
 def ask(prompt: str, *, system: str | None = None, claude_model: str = CLAUDE_MODEL,

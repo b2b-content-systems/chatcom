@@ -3,8 +3,9 @@
     drafted --chatcom cast--> cast
 
     plan (core/casting.py) -> notice + --approve-calls N (the exact count)
-      -> style sheet -> each member's neutral pose -> the other poses
-         (from the neutral one) and the backgrounds -> cutouts
+      -> style sheet -> each member's neutral pose, cut out at once -> the
+         other poses (from the neutral one), each cut out, and the backgrounds
+         a pose with no green behind it is drawn once more (cutout.NoGreen)
       -> episodes/<code>/cast.next.json; cast.json changes only at `committed`
 
 Images are content-addressed in <show>/cache/images/, so a rerun after a stop
@@ -32,8 +33,9 @@ EXT = {"image/png": ".png", "image/jpeg": ".jpg", "image/webp": ".webp"}
 NOTICE = {
     "gemini": ("Casting sends image prompts to Google (Gemini) with your GEMINI_API_KEY. Prompts are built from the "
                "show's look and title, the new sets' descriptions, and each cast member's role, traits and texting "
-               "style (these come from the chat and can quote a few words of it). The cast's names and nicknames "
-               "are removed from every prompt before it is sent. Members with a reference photo: that photo (a clean "
+               "style (these come from the chat and can quote a few words of it), and any appearance notes you "
+               "wrote in setup.json (`looks`). The cast's names and nicknames are removed from every prompt before "
+               "it is sent. Members with a reference photo: that photo (a clean "
                "copy, no location or device data) goes too."),
     "replay": "Replay painter: nothing leaves this computer.",
 }
@@ -97,6 +99,19 @@ def _photos(show: store.Show, sheet: dict, needed: set[str]) -> dict[str, Path]:
         dest = show.dir / "cast" / "refs" / _slug(m["name"])
         copies = image_ops.copy_all(image_ops.manifest([src], 1), dest, 1)
         out[m["name"]] = dest / copies[0]["file"]
+    return out
+
+
+def looks_for(show: store.Show, members: list[dict]) -> dict[str, str]:
+    """The operator's appearance notes (setup.json `looks`), keyed by cast name.
+    A note may name a member by any of their names or nicknames."""
+    setup = store.read_json(show.setup_path) if show.setup_path.exists() else {}
+    notes = {k.strip().lower(): v.strip() for k, v in (setup.get("looks") or {}).items() if v and v.strip()}
+    out = {}
+    for m in members:
+        note = next((notes[n.lower()] for n in (m["name"], *m.get("aliases", [])) if n.lower() in notes), None)
+        if note:
+            out[m["name"]] = note
     return out
 
 
@@ -184,8 +199,8 @@ def cast(show: store.Show, painter, *, accepted: bool, approve_calls: int | None
         except BudgetSpent:
             spent = painter.calls - calls_before
             raise ChatcomError("CHATCOM_E_AWAITING_CONFIRMATION",
-                               f"casting needs more image calls than the {approve_calls} approved (retries, a model "
-                               f"switch or a refused photo); it stopped after {spent}",
+                               f"casting needs more image calls than the {approve_calls} approved (retries, a "
+                               f"redraw, a model switch or a refused photo); it stopped after {spent}",
                                f"Images already made are kept and cost nothing again. Ask the operator, then run "
                                f"`chatcom cast {show.slug}` to see the new count.", recovery="ask",
                                side_effects="partial", context={"calls_billed": spent}) from None
@@ -218,6 +233,22 @@ def _batch(show, painter, model, base, bible_next, beats, photos, say):
     refused: list[str] = []
     by_name = {m["name"]: m for m in sheet["members"]}
     members = bible_next["cast"]
+    looks = looks_for(show, members)
+
+    def place(call, got):
+        """Cut the pose out now. No green behind it: drop it and draw it once more."""
+        if got is None:
+            raise SwitchModel(f"{model} refused a {call.kind} image")
+        entry = by_name[call.member]
+        try:
+            _place_pose(show, entry, call.pose, *got)
+        except cutout.NoGreen:
+            say(f"casting: a {call.pose} drawing came back with no green background; drawing it once more")
+            got = run.draw(call, photos)  # its cache entry is gone, so this is a new call
+            if got is None:
+                raise SwitchModel(f"{model} refused a {call.kind} image") from None
+            _place_pose(show, entry, call.pose, *got)  # a second miss is an error; the next run draws it again
+        return got
 
     def finish(call, got, name):
         if got is None:
@@ -243,14 +274,15 @@ def _batch(show, painter, model, base, bible_next, beats, photos, say):
                                                "photo": None, "poses": {}})
         if "neutral" in entry["poses"]:
             return m["name"], None
-        calls = _neutral_call(sheet, by_name, members, m, look, title)
+        calls = _neutral_call(sheet, by_name, members, m, look, title, looks)
         got = run.draw(calls[0], photos)
         if got is None and entry["source"] == "photo":
             say(f"casting: the image model declined {m['name']}'s photo; casting them from how they text instead")
             refused.append(m["name"])
             entry.update(source="behavior", reason="provider_refused", photo=None)
-            calls = _neutral_call(sheet, by_name, members, m, look, title)
+            calls = _neutral_call(sheet, by_name, members, m, look, title, looks)
             got = run.draw(calls[0], photos)
+        got = place(calls[0], got)  # cut out before any other pose is drawn from it
         finish(calls[0], got, f"pose:{m['name']}:neutral")
         return m["name"], got
 
@@ -270,21 +302,17 @@ def _batch(show, painter, model, base, bible_next, beats, photos, say):
                                   locs) if not (c.kind == "pose" and c.pose == "neutral") and c.kind != "style"]
 
     def other(c):
-        return c, run.draw(c, photos)
+        got = run.draw(c, photos)
+        if got is None:  # only photos may be refused: stop the batch now, not after every other call
+            raise SwitchModel(f"{model} refused a {c.kind} image")
+        return c, (place(c, got) if c.kind == "pose" else got)
 
     done = _each(other, rest, PARALLEL if painter.mode != "replay" else 1)
 
-    # 4. files and cutouts
-    for name, (data, mime, key) in list(run.made.items()):
-        if not name.startswith("pose:") or not key:
-            continue
-        _, member, pose = name.split(":", 2)
-        _place_pose(show, by_name[member], pose, data, mime, key)
+    # 4. the backgrounds' files (poses were placed as they were drawn)
     for c, got in done:
         data, mime, key = finish(c, got, f"{c.kind}:{c.member or c.background}:{c.pose or ''}")
-        if c.kind == "pose":
-            _place_pose(show, by_name[c.member], c.pose, data, mime, key)
-        else:
+        if c.kind != "pose":
             path = show.dir / "cast" / "backgrounds" / f"{c.background}{EXT.get(mime, '.png')}"
             store.write_atomic(path, data)
             entry = next((b for b in sheet["backgrounds"] if b["id"] == c.background), None)
@@ -321,12 +349,13 @@ def _each(fn, items, workers):
     return [f.result() for f in futures]
 
 
-def _neutral_call(sheet, by_name, members, m, look, title):
+def _neutral_call(sheet, by_name, members, m, look, title, looks):
     """This member's neutral-pose call, planned with the whole cast (so its look hint is its own)."""
     full = {**sheet, "members": [by_name.get(x["name"], {"name": x["name"], "poses": {}, "source": x["source"],
                                                           "photo": None}) for x in members], "backgrounds": []}
     cast_now = [{**x, "source": by_name.get(x["name"], x)["source"]} for x in members]
-    return [c for c in rules.plan(full, cast_now, look, title) if c.member == m["name"] and c.pose == "neutral"]
+    return [c for c in rules.plan(full, cast_now, look, title, looks=looks)
+            if c.member == m["name"] and c.pose == "neutral"]
 
 
 def _place_pose(show, entry, pose, data, mime, key):

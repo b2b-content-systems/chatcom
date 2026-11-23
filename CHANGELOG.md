@@ -21,6 +21,16 @@ Next Step 3, part 1: casting.
   ffmpeg, keyed on the colour sampled from the corners.
 - Results go to `cast.next.json`; `cast.json` changes only when the episode is committed.
 - `CHATCOM_E_PAINTER_UNAVAILABLE` (exit 4). llm-fallback re-vendored (image output, refusals as answers).
+- Appearance notes: `looks` in setup.json (`{"Mike": "beard, tall, glasses"}`) goes into that member's first
+  drawing, with names removed, so someone cast from how they text can still look like themselves.
+- Cutouts: a drawing whose corner is not green is drawn once more, not keyed (keying on it cut that colour out of the
+  figure). The green fringe on hair is cleaned on the cut edge only; green inside the figure is left alone.
+- A reply with no image and no policy reason (Gemini's `NO_IMAGE`, or text only) is asked once more before it counts
+  as a refusal.
+
+### Changed
+- No starting look uses green, and every pose asks for nothing green on the character: the key took a forest-green
+  top half out of the picture. Members with that look are drawn again.
 
 ## 0.1.0.dev7 (2026-11-23)
 

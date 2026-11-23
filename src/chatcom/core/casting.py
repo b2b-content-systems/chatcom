@@ -43,16 +43,17 @@ POSE_TEXT = {
 
 # A starting look for each member cast from how they text, so no two begin alike (two sparse members came out
 # as near twins in the first live run, 2026-11-23). Index i picks a different combination for every member.
+# No greens: the chroma key took a forest-green top half out of the picture (measured, 2026-11-23).
 HAIR = ("short black hair", "long red hair", "a shaved head", "curly blond hair", "a grey ponytail",
         "a brown buzz cut", "wavy dark-brown hair", "dyed blue hair")
 BUILD = ("tall and lanky", "short and stocky", "average height, broad shoulders", "small and wiry")
-OUTFIT = ("a mustard-yellow", "a navy-blue", "a forest-green", "a burgundy", "a sky-blue", "a charcoal", "an orange",
+OUTFIT = ("a mustard-yellow", "a navy-blue", "a coral", "a burgundy", "a sky-blue", "a charcoal", "an orange",
           "a lavender")
 
 
 def look_hint(index: int) -> str:
     """Distinct for the first 256 members. The prompt never names a member, so two sparse members with the same
-    hint would get the same content key and share one drawing. The first 8 hints never change (cache keys)."""
+    hint would get the same content key and share one drawing. Changing a hint redraws that member (cache keys)."""
     h, b, o = len(HAIR), len(BUILD), len(OUTFIT)
     return (f"{HAIR[index % h]}, {BUILD[(index * 3 + index // h) % b]}, wearing "
             f"{OUTFIT[(index * 5 + index // (h * b)) % o]} top")
@@ -87,18 +88,26 @@ def describe_member(m: dict) -> str:
     return ", ".join(bits) or "an easy-going member of a friend group"
 
 
-def pose_prompt(look: str, m: dict, pose: str, *, from_photo: bool, first: bool, index: int = 0) -> str:
+def pose_prompt(look: str, m: dict, pose: str, *, from_photo: bool, first: bool, index: int = 0,
+                note: str | None = None) -> str:
+    """`note` is the operator's own description of how this member looks (setup.json `looks`); it is used for the
+    first (neutral) pose only, because every other pose is drawn from that one."""
     style = LOOK_STYLE[look]
     if first and from_photo:
         who = ("The person in the reference photo, redrawn as a character in this show. Keep their recognisable "
-               "features, hair and build; change the clothes to everyday clothes that suit them.")
+               "features, hair and build; change the clothes to everyday clothes that suit them."
+               + (f" Also: {note}." if note else ""))
+    elif first and note:
+        who = (f"An original character (not a real or famous person) who is {describe_member(m)}. They look like "
+               f"this: {note}. Anything that leaves out, take from: {look_hint(index)}. Give them a distinct face "
+               "that fits that personality.")
     elif first:
         who = (f"An original character (not a real or famous person) who is {describe_member(m)}. Start from "
                f"this look: {look_hint(index)}; give them a distinct face that fits that personality.")
     else:
         who = "The same character as in the character reference: same face, hair, build and outfit."
     return (f"{who} Pose: {POSE_TEXT[pose]}. Full body, centred, {style}, matching the style reference. "
-            f"On {GREEN}. No text, no logo, no other people.")
+            f"On {GREEN}. Nothing green on the character. No text, no logo, no other people.")
 
 
 def background_prompt(look: str, description: str) -> str:
@@ -107,9 +116,10 @@ def background_prompt(look: str, description: str) -> str:
 
 
 def plan(sheet: dict, members: list[dict], look: str, title: str | None,
-         new_locations: list[dict] | None = None) -> list[Call]:
+         new_locations: list[dict] | None = None, looks: dict[str, str] | None = None) -> list[Call]:
     """Every image this show still needs, in the order they must be made.
-    `members` are bible cast entries (with role and traits); `sheet` is cast.json."""
+    `members` are bible cast entries (with role and traits); `sheet` is cast.json; `looks` maps a member's name
+    to the operator's appearance note."""
     calls: list[Call] = []
     if not sheet.get("style_sheet"):
         calls.append(Call("style", style_prompt(look, title), aspect="16:9"))
@@ -124,7 +134,9 @@ def plan(sheet: dict, members: list[dict], look: str, title: str | None,
             first = pose == "neutral"
             refs = ["style"] + ([f"photo:{m['name']}"] if first and from_photo else [] if first
                                 else [f"pose:{m['name']}:neutral"])
-            calls.append(Call("pose", pose_prompt(look, m, pose, from_photo=from_photo, first=first, index=index),
+            note = (looks or {}).get(m["name"])
+            calls.append(Call("pose", pose_prompt(look, m, pose, from_photo=from_photo, first=first, index=index,
+                                                  note=note),
                               member=m["name"], pose=pose, refs=refs))
     for b in sheet["backgrounds"]:
         if not b.get("file"):

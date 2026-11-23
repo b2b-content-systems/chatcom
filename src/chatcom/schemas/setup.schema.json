@@ -35,6 +35,11 @@
       "type": "object",
       "additionalProperties": { "type": "array", "items": { "type": "string", "minLength": 1 }, "minItems": 1 },
       "description": "Canonical name to the other display names (or phone numbers) the same person appears under."
+    },
+    "looks": {
+      "type": "object",
+      "additionalProperties": { "type": "string", "minLength": 1, "maxLength": 200 },
+      "description": "Member name (or nickname) to a short note on how they look, e.g. \"beard, tall, glasses\". Casting sends it with the image prompt (names removed) for that member's first drawing. No flag: edit the show's setup.json before `chatcom cast`."
     }
   }
 }

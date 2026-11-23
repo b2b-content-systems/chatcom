@@ -7,6 +7,7 @@ Gemini rules (docs/design and PLAN.md, "Image errors by kind"):
     5xx / timeout          -> 3 retries with backoff, then the fallback model
     429 / quota            -> stop; images already made are kept in the cache
     content refusal        -> not an error: the caller casts that member from behavior
+    no image (NO_IMAGE, or text only) -> asked once more, then as above
 
 The operator's own GEMINI_API_KEY pays for every call; CHATCOM has no key."""
 from __future__ import annotations
@@ -94,6 +95,9 @@ class GeminiPainter:
         ans = self._ask(prompt, refs, aspect, MAX_TOKENS)
         if ans.cut_off:  # the model ran out of room before drawing: once more with more room
             ans = self._ask(prompt, refs, aspect, MAX_TOKENS_RETRY)
+        elif not ans.images and (ans.reason == "NO_IMAGE" or ans.finish != "refused"):
+            # a reply with no picture and no policy reason is often a one-off: once more before giving up
+            ans = self._ask(prompt, refs, aspect, MAX_TOKENS)
         if ans.finish == "refused":
             return Painted(None, "", ans.model, refused=True)
         if not ans.images:

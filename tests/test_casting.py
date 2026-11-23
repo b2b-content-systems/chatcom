@@ -449,3 +449,126 @@ def test_prompts_sent_to_the_painter_hold_no_cast_name(lake_show, tmp_path, beat
     casting.cast(lake_show, painter, accepted=True, approve_calls=n, say=lambda m: None)
     import re
     assert seen and not any(re.search(rf"(?<!\w){re.escape(nm)}(?!\w)", s, re.I) for s in seen for nm in names)
+
+
+# ---- casting follow-ups: green check, despill, no-image retry, appearance notes -------------------
+# Value: protects=a figure is never keyed out by a non-green corner, hair loses its green fringe while green inside
+# the figure stays, a picture-less reply is asked once more, the operator's look notes reach the first drawing;
+# fails_when=any of those regress; why_new=TODOS casting follow-ups; seam=ReplayPainter, fake transport, ffmpeg;
+# no_claim=how a real model draws
+
+def _rgba(path, w):
+    import subprocess
+    raw = subprocess.run(["ffmpeg", "-nostdin", "-v", "error", "-i", str(path), "-f", "rawvideo", "-pix_fmt", "rgba",
+                          "-"], capture_output=True, check=True).stdout
+    return lambda x, y: tuple(raw[(y * w + x) * 4:(y * w + x) * 4 + 4])
+
+
+@needs_ffmpeg
+def test_a_drawing_with_no_green_corner_is_not_keyed(tmp_path):
+    src = tmp_path / "red.png"
+    src.write_bytes(ReplayPainter().paint("a flat scene", [], "3:4").data)  # no green asked for: a flat colour
+    if cutout.is_green(cutout.corner_colour(src)):
+        pytest.skip("the replay colour happened to be green")
+    with pytest.raises(cutout.NoGreen) as e:
+        cutout.key(src, tmp_path / "cut.png")
+    assert e.value.code == "CHATCOM_E_IMAGE_UNREADABLE" and not (tmp_path / "cut.png").exists()
+    assert cutout.is_green("0x00b140") and not cutout.is_green("0x808080") and not cutout.is_green("0x2050a0")
+
+
+@needs_ffmpeg
+def test_the_despill_clears_the_green_edge_and_leaves_the_figure(tmp_path):
+    import subprocess
+    src = tmp_path / "pose.png"
+    # a coral top, with a 4px green-tinted fringe on its left edge (like hair against the green)
+    subprocess.run(["ffmpeg", "-nostdin", "-v", "error", "-f", "lavfi", "-i", "color=c=0x00B140:s=300x400", "-vf",
+                    "format=rgb24,drawbox=x=100:y=80:w=100:h=240:color=0xFF7F50:t=fill,"
+                    "drawbox=x=96:y=76:w=4:h=248:color=0x60B070:t=fill", "-frames:v", "1", "-y", str(src)], check=True)
+    px = _rgba(cutout.key(src, tmp_path / "cut.png"), 300)
+    r, g, b, a = px(97, 200)
+    assert a == 255 and g <= max(r, b)  # the fringe is no longer green
+    assert all(abs(x - y) <= 2 for x, y in zip(px(150, 200), (255, 127, 80, 255)))  # inside: unchanged
+    assert px(5, 5)[3] == 0
+
+
+def test_no_starting_look_is_green_and_every_pose_asks_for_no_green():
+    assert not any("green" in o for o in rules.OUTFIT)
+    for pose in rules.POSES:
+        assert "Nothing green on the character" in rules.pose_prompt("sitcom", member("A"), pose, from_photo=False,
+                                                                       first=pose == "neutral")
+
+
+def no_image(model="gemini-nano-banana-2.1"):
+    return 200, {"modelVersion": model, "candidates": [{"content": {"parts": []}, "finishReason": "NO_IMAGE"}]}
+
+
+def test_a_reply_with_no_image_is_asked_once_more(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "k")
+    replies = [no_image(), image_ok("gemini-nano-banana-2.1")]
+    p = GeminiPainter(transport=lambda u, h, pl: replies.pop(0))
+    assert p.paint("draw", [], "3:4").data and p.calls == 2
+    twice = [no_image(), no_image()]
+    p = GeminiPainter(transport=lambda u, h, pl: twice.pop(0))
+    assert p.paint("draw", [], "3:4").refused and p.calls == 2  # then it is cached as a refusal, never paid again
+    text_only = [(200, {"candidates": [{"content": {"parts": [{"text": "here you go"}]}, "finishReason": "STOP"}]}),
+                 image_ok("gemini-nano-banana-2.1")]
+    p = GeminiPainter(transport=lambda u, h, pl: text_only.pop(0))
+    assert p.paint("draw", [], "3:4").data and p.calls == 2
+    safety = [(200, {"candidates": [{"finishReason": "IMAGE_SAFETY"}]})]
+    p = GeminiPainter(transport=lambda u, h, pl: safety.pop(0))
+    assert p.paint("draw", [], "3:4").refused and p.calls == 1  # a policy refusal is not asked again
+
+
+@needs_ffmpeg
+def test_a_pose_with_no_green_behind_it_is_drawn_once_more(lake_show, tmp_path, beats_s01e01, capsys, not_a_tty):
+    drafted(capsys, lake_show, tmp_path, beats_s01e01)
+    ep = lake_show.episode_dir("S01E01")
+    n = len(casting.plan_for(lake_show, json.loads((ep / "bible.next.json").read_text()),
+                             json.loads(lake_show.cast_path.read_text()), json.loads((ep / "beats.json").read_text())))
+    import dataclasses
+    import subprocess
+    red = tmp_path / "red.png"
+    subprocess.run(["ffmpeg", "-nostdin", "-v", "error", "-f", "lavfi", "-i", "color=c=0xC03030:s=300x400",
+                    "-frames:v", "1", "-y", str(red)], check=True)
+    painter = ReplayPainter()
+    real, bad = painter.paint, []
+
+    def paint(prompt, refs, aspect):
+        got = real(prompt, refs, aspect)  # counted and capped like any call
+        if "Pose: standing relaxed" in prompt and not bad:  # the first neutral pose comes back with no green
+            bad.append(prompt)
+            return dataclasses.replace(got, data=red.read_bytes())
+        return got
+    painter.paint = paint
+    said = []
+    with pytest.raises(ChatcomError) as e:  # the redraw is one call over the exact approved count
+        casting.cast(lake_show, painter, accepted=True, approve_calls=n, say=said.append)
+    assert e.value.code == "CHATCOM_E_AWAITING_CONFIRMATION" and painter.calls == n
+    assert any("no green background" in s for s in said)
+    res = casting.cast(lake_show, painter, accepted=True, approve_calls=n, say=said.append)
+    assert painter.calls == n + 1 and len(bad) == 1
+    nxt = json.loads(Path(res["cast_next"]).read_text("utf-8"))
+    assert all(len(m["poses"]) == len(rules.POSES) for m in nxt["members"])
+
+
+@needs_ffmpeg
+def test_appearance_notes_reach_the_first_drawing_with_no_name(lake_show, tmp_path, beats_s01e01, capsys,
+                                                                not_a_tty):
+    drafted(capsys, lake_show, tmp_path, beats_s01e01)
+    setup = json.loads(lake_show.setup_path.read_text("utf-8"))
+    setup["looks"] = {"mike": "beard, tall, Mike's red cap"}  # any case; a name inside the note is scrubbed
+    lake_show.setup_path.write_text(json.dumps(setup), "utf-8")
+    assert not problems("setup", {"operator_sender": "Dave", "looks": setup["looks"]})
+    ep = lake_show.episode_dir("S01E01")
+    bible = json.loads((ep / "bible.next.json").read_text())
+    assert casting.looks_for(lake_show, bible["cast"]) == {"Mike": "beard, tall, Mike's red cap"}
+    n = len(casting.plan_for(lake_show, bible, json.loads(lake_show.cast_path.read_text()),
+                             json.loads((ep / "beats.json").read_text())))
+    seen = []
+    painter = ReplayPainter()
+    real = painter.paint
+    painter.paint = lambda prompt, refs, aspect: (seen.append(prompt), real(prompt, refs, aspect))[1]
+    casting.cast(lake_show, painter, accepted=True, approve_calls=n, say=lambda m: None)
+    noted = [s for s in seen if "beard, tall" in s]
+    assert len(noted) == 1 and "standing relaxed" in noted[0]  # the neutral pose only
+    assert "a friend's red cap" in noted[0] and "Mike" not in noted[0]
