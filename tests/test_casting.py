@@ -589,12 +589,12 @@ def cast_all(capsys, lake_show, tmp_path, beats_s01e01, photo_of=None):
     return ep, n
 
 
-def test_a_take_changes_the_key_and_take_zero_changes_nothing():
+def test_a_take_changes_the_key_and_no_take_changes_nothing():
     c = rules.Call("pose", "p", member="A", pose="neutral")
     assert rules.content_key("m", c, []) == rules.content_key("m", rules.Call("pose", "p", member="A", pose="neutral",
-                                                                                take=0), [])
+                                                                                take=""), [])
     assert rules.content_key("m", c, []) != rules.content_key("m", rules.Call("pose", "p", member="A",
-                                                                                pose="neutral", take=1), [])
+                                                                                pose="neutral", take="ab12"), [])
 
 
 @needs_ffmpeg
@@ -760,3 +760,41 @@ def test_a_recast_with_the_wrong_painter_changes_nothing(lake_show, tmp_path, be
         casting.recast(lake_show, p, member="Mike", accepted=True, approve_calls=len(rules.POSES), say=lambda m: None)
     assert e.value.code == "CHATCOM_E_USAGE"
     assert (ep / "cast.next.json").read_text() == before and lake_show.state_path("S01E01").read_text() == state
+
+
+
+@needs_ffmpeg
+def test_a_discarded_take_is_never_handed_back_from_the_cache(lake_show, tmp_path, beats_s01e01, capsys, not_a_tty):
+    ep, _ = cast_all(capsys, lake_show, tmp_path, beats_s01e01)
+    saved = (ep / "cast.next.json").read_text()
+    first = casting.recast(lake_show, ReplayPainter(), member="Mike", accepted=True, approve_calls=len(rules.POSES),
+                           say=lambda m: None)
+    (ep / "cast.next.json").write_text(saved)  # the recast is discarded: the counter starts again from take 0
+    p = ReplayPainter()
+    again = casting.recast(lake_show, p, member="Mike", accepted=True, approve_calls=len(rules.POSES),
+                           say=lambda m: None)
+    assert first["paid"] >= 1 and p.calls >= 1  # take 1 again, yet the neutral pose is drawn, not read from cache
+
+
+@needs_ffmpeg
+def test_a_recast_with_a_missing_photo_changes_nothing(lake_show, tmp_path, beats_s01e01, capsys, not_a_tty):
+    ep, n = cast_all(capsys, lake_show, tmp_path, beats_s01e01, photo_of="Mike")
+    before = (ep / "cast.next.json").read_text()
+    state = lake_show.state_path("S01E01").read_text()
+    for f in tmp_path.glob("friend.png"):
+        f.unlink()  # the reference photo has moved since the first cast
+    with pytest.raises(ChatcomError) as e:
+        casting.recast(lake_show, ReplayPainter(), accepted=True, approve_calls=n, say=lambda m: None)
+    assert e.value.code == "CHATCOM_E_IMAGE_UNREADABLE"
+    assert (ep / "cast.next.json").read_text() == before and lake_show.state_path("S01E01").read_text() == state
+
+
+@needs_ffmpeg
+def test_a_recast_photo_path_is_stored_in_full(lake_show, tmp_path, beats_s01e01, capsys, not_a_tty, monkeypatch):
+    cast_all(capsys, lake_show, tmp_path, beats_s01e01)
+    (tmp_path / "m.png").write_bytes(png(40, 50, shot="2026:01:09 19:00:00"))
+    monkeypatch.chdir(tmp_path)
+    res = casting.recast(lake_show, ReplayPainter(), member="Mike", photo="m.png", accepted=True,
+                         approve_calls=len(rules.POSES), say=lambda m: None)
+    mike = next(m for m in json.loads(Path(res["cast_next"]).read_text())["members"] if m["name"] == "Mike")
+    assert Path(mike["photo"]).is_absolute() and mike["take_id"]

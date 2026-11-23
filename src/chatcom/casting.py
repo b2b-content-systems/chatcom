@@ -247,7 +247,8 @@ def recast(show: store.Show, painter, *, member: str | None = None, photo: str |
         bible_next = store.read_json(ep / "bible.next.json")
         sheet = _reset(copy.deepcopy(base), bible_next["cast"], member, photo, no_photo)
         _check_painter(sheet, painter)  # before anything is written: a refusal leaves the episode as it was
-        n = len(plan_for(show, bible_next, sheet, store.read_json(ep / "beats.json")))
+        beats = store.read_json(ep / "beats.json")
+        n = len(plan_for(show, bible_next, sheet, beats))
         what = f"--member {_quote(member)}" + (f" --photo {_quote(photo)}" if photo else "") + \
                (" --no-photo" if no_photo else "") if member else ""
         command = f"chatcom recast {show.slug} {what}".rstrip() + f" --accept-data-flow --approve-calls {n}"
@@ -260,8 +261,11 @@ def recast(show: store.Show, painter, *, member: str | None = None, photo: str |
                                f"this recast makes {n} image calls; --approve-calls was {approve_calls}",
                                f"Ask the operator. If they agree, run `{command}`.", recovery="ask",
                                context={"notice": text, "calls": n, "next_command": command})
-        store.write_json(nxt_path, sheet)
+        needed = {r[6:] for c in plan_for(show, bible_next, sheet, beats) for r in c.refs if r.startswith("photo:")}
+        _photos(show, sheet, needed)  # a missing or unreadable photo stops here, before anything changes
+        # state first: a stop between the two writes leaves `drafted` with the old, complete sheet
         store.write_json(show.state_path(code), state_ops.reopen_cast(st, store.now()))
+        store.write_json(nxt_path, sheet)
         return _cast(show, painter, accepted=True, approve_calls=n, say=say)
 
 
@@ -289,9 +293,9 @@ def _reset(sheet: dict, members: list[dict], member: str | None, photo: str | No
         if photo or no_photo:
             raise ChatcomError("CHATCOM_E_USAGE", "--photo and --no-photo need --member",
                                "Name the member: `chatcom recast <show> --member NAME --photo PATH`.")
-        sheet.update(take=sheet.get("take", 0) + 1, image_model=None, style_sheet=None)
+        sheet.update(take=sheet.get("take", 0) + 1, take_id=_take_id(), image_model=None, style_sheet=None)
         for m in sheet["members"]:
-            m.update(poses={}, take=m.get("take", 0) + 1)
+            m.update(poses={}, take=m.get("take", 0) + 1, take_id=_take_id())
         for b in sheet["backgrounds"]:
             b.update(file=None, key=None)
         return sheet
@@ -301,16 +305,24 @@ def _reset(sheet: dict, members: list[dict], member: str | None, photo: str | No
         bm = next(m for m in members if m["name"] == name)
         entry = {"name": name, "source": bm["source"], "reason": bm["reason"], "photo": None, "poses": {}}
         sheet["members"].append(entry)
-    entry.update(poses={}, take=entry.get("take", 0) + 1)
+    entry.update(poses={}, take=entry.get("take", 0) + 1, take_id=_take_id())
     if photo:
         src = Path(photo).expanduser()
         if not src.is_file():
             raise ChatcomError("CHATCOM_E_IMAGE_UNREADABLE", f"no photo at {src}", "Check the path and try again.",
                                context={"member": name})
-        entry.update(source="photo", reason=None, photo=str(src))
+        entry.update(source="photo", reason=None, photo=str(src.resolve()))
     if no_photo:
         entry.update(source="behavior", reason="operator_choice", photo=None)
     return sheet
+
+
+def _take_id() -> str:
+    """Goes into the content key. The take counter alone can repeat (a discarded
+    cast.next.json starts again from cast.json), and a repeat would hand back the
+    abandoned take's cached drawing as if it were new."""
+    import secrets
+    return secrets.token_hex(6)
 
 
 def _member_name(name: str, members: list[dict]) -> str:
