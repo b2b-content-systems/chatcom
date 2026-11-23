@@ -7,10 +7,10 @@ inside the figure is left alone. No matting model or weights ship.
                   --yes--> chromakey -> despill where alpha is near 0 -> PNG"""
 from __future__ import annotations
 
-import shutil
 import subprocess
 from pathlib import Path
 
+from chatcom.adapters import tools
 from chatcom.core.errors import ChatcomError
 
 SIMILARITY = 0.10
@@ -23,11 +23,7 @@ class NoGreen(ChatcomError):
 
 
 def _ffmpeg() -> str:
-    exe = shutil.which("ffmpeg")
-    if not exe:
-        raise ChatcomError("CHATCOM_E_PREFLIGHT", "ffmpeg is not installed; casting keys characters off green with it",
-                           "Install ffmpeg (macOS: `brew install ffmpeg`; Debian/Ubuntu: `apt install ffmpeg`).")
-    return exe
+    return tools.ffmpeg("casting keys characters off green with it")
 
 
 def corner_colour(src: Path) -> str:
