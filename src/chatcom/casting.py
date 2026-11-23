@@ -131,97 +131,208 @@ def plan_for(show: store.Show, bible_next: dict, sheet: dict, beats: dict) -> li
 
 
 def cast(show: store.Show, painter, *, accepted: bool, approve_calls: int | None, say=print) -> dict:
-    from chatcom import app
     with show.lock():
-        bible, sheet, _ = app._load(show)
-        code, st = app._current_state(show, bible)
-        state_ops.require(st, "drafted", "cast")
-        ep = show.episode_dir(code)
-        nxt_path = ep / "cast.next.json"
-        base = store.read_json(nxt_path) if nxt_path.exists() else copy.deepcopy(sheet)
-        bible_next = store.read_json(ep / "bible.next.json")
-        beats = store.read_json(ep / "beats.json")
-        calls = plan_for(show, bible_next, base, beats)
-        if not calls:
-            if st["stage"] == "drafted":
-                store.write_json(nxt_path, base)
-                store.write_json(show.state_path(code), state_ops.advance(st, "cast", store.now()))
-            return {"episode": code, "stage": "cast", "calls": 0, "paid": 0, "cast_next": str(nxt_path),
-                    "refused": [], "model": base.get("image_model")}
-        if not accepted:
-            text = NOTICE[painter.mode] + f" This step makes {len(calls)} image calls."
-            raise ChatcomError("CHATCOM_E_AWAITING_CONFIRMATION", text,
-                               f"Ask the operator. If they agree, run `chatcom cast {show.slug} --accept-data-flow "
-                               f"--approve-calls {len(calls)}`.", recovery="ask",
-                               context={"notice": text, "calls": len(calls),
-                                        "next_command": f"chatcom cast {show.slug} --accept-data-flow "
-                                                        f"--approve-calls {len(calls)}"})
-        if approve_calls != len(calls):
-            raise ChatcomError("CHATCOM_E_AWAITING_CONFIRMATION",
-                               f"this step makes {len(calls)} image calls; --approve-calls was {approve_calls}",
-                               f"Approve exactly that count: --approve-calls {len(calls)}. Cached images cost nothing "
-                               "and are not counted twice.", recovery="ask",
-                               context={"calls": len(calls),
-                                        "next_command": f"chatcom cast {show.slug} --accept-data-flow "
-                                                        f"--approve-calls {len(calls)}"})
-        needed = {r[6:] for c in calls for r in c.refs if r.startswith("photo:")}
-        photos = _photos(show, base, needed)
-        pinned = base.get("image_model")
-        if pinned and (painter.mode == "replay") != (pinned == "replay-painter"):
-            raise ChatcomError("CHATCOM_E_USAGE", f"this show is cast with {pinned}; the {painter.mode} painter cannot "
-                               "add to it", "A show keeps one image model. Use the same painter as its first cast.",
-                               context={"image_model": pinned})
-        if pinned and painter.mode == "gemini" and getattr(painter, "requested", None) not in (None, pinned):
-            raise ChatcomError("CHATCOM_E_USAGE", f"this show is cast with {pinned}, not {painter.requested}",
-                               "A show keeps one image model: drop --image-model.", context={"image_model": pinned})
-        models = [pinned] if pinned else ([painter.model] if painter.mode != "gemini" else
-                                          [painter.model] + ([FALLBACK_MODEL] if painter.model != FALLBACK_MODEL else []))
-        last_error = None
-        calls_before = painter.calls
-        painter.budget = calls_before + approve_calls  # the approved count is a hard cap on billed calls
-        try:
-            for model in models:
-                if painter.mode == "gemini":
-                    painter.model = model
-                try:
-                    result = _batch(show, painter, model, base, bible_next, beats, photos, say)
-                    break
-                except SwitchModel as e:
-                    last_error = f"{model}: {e}"
-                    say(f"casting: {model} cannot finish the batch ({e}); moving the whole batch to the next model")
-            else:
-                fix = ("Run `chatcom cast` again later; images already made are kept." if not pinned else
-                       f"This show is cast with {pinned} and keeps that model. Run `chatcom cast` again later. If "
-                       "Google has retired the model, this show cannot add images until recasting is supported.")
-                raise ChatcomError("CHATCOM_E_PAINTER_UNAVAILABLE", f"no image model could finish casting: {last_error}",
-                                   fix, recovery="retry" if not pinned else "ask", side_effects="partial",
-                                   context={"models": models})
-        except BudgetSpent:
-            spent = painter.calls - calls_before
-            raise ChatcomError("CHATCOM_E_AWAITING_CONFIRMATION",
-                               f"casting needs more image calls than the {approve_calls} approved (retries, a "
-                               f"redraw, a model switch or a refused photo); it stopped after {spent}",
-                               f"Images already made are kept and cost nothing again. Ask the operator, then run "
-                               f"`chatcom cast {show.slug}` to see the new count.", recovery="ask",
-                               side_effects="partial", context={"calls_billed": spent}) from None
-        finally:
-            # the ledger records every billed call, whatever way the run ends
-            spent = painter.calls - calls_before
-            if spent:
-                st_now = store.read_json(show.state_path(code))
-                st_now["image_calls"] = st_now.get("image_calls", 0) + spent
-                store.write_json(show.state_path(code), st_now)
-            painter.budget = None
-        sheet_next, refused, _ = result
-        paid = spent
-        check("cast", sheet_next, code="CHATCOM_E_BIBLE_INVALID", what="the cast sheet casting made is not valid",
-              fix="This is a chatcom bug: report it with the run log.")
-        store.write_json(nxt_path, sheet_next)
-        st_now = store.read_json(show.state_path(code))  # holds the ledger written above
-        st2 = state_ops.advance(st_now, "cast", store.now()) if st_now["stage"] == "drafted" else st_now
-        store.write_json(show.state_path(code), st2)
+        return _cast(show, painter, accepted=accepted, approve_calls=approve_calls, say=say)
+
+
+def _episode(show: store.Show):
+    """This week's episode and the cast sheet it builds on (cast.next.json once casting has started)."""
+    from chatcom import app
+    bible, sheet, _ = app._load(show)
+    code, st = app._current_state(show, bible)
+    ep = show.episode_dir(code)
+    nxt_path = ep / "cast.next.json"
+    base = store.read_json(nxt_path) if nxt_path.exists() else copy.deepcopy(sheet)
+    return code, st, ep, nxt_path, base
+
+
+def _cast(show, painter, *, accepted, approve_calls, say):
+    code, st, ep, nxt_path, base = _episode(show)
+    state_ops.require(st, "drafted", "cast")
+    bible_next = store.read_json(ep / "bible.next.json")
+    beats = store.read_json(ep / "beats.json")
+    calls = plan_for(show, bible_next, base, beats)
+    if not calls:
+        if st["stage"] == "drafted":
+            store.write_json(nxt_path, base)
+            store.write_json(show.state_path(code), state_ops.advance(st, "cast", store.now()))
+        return {"episode": code, "stage": "cast", "calls": 0, "paid": 0, "cast_next": str(nxt_path),
+                "refused": [], "model": base.get("image_model")}
+    if not accepted:
+        text = NOTICE[painter.mode] + f" This step makes {len(calls)} image calls."
+        raise ChatcomError("CHATCOM_E_AWAITING_CONFIRMATION", text,
+                           f"Ask the operator. If they agree, run `chatcom cast {show.slug} --accept-data-flow "
+                           f"--approve-calls {len(calls)}`.", recovery="ask",
+                           context={"notice": text, "calls": len(calls),
+                                    "next_command": f"chatcom cast {show.slug} --accept-data-flow "
+                                                    f"--approve-calls {len(calls)}"})
+    if approve_calls != len(calls):
+        raise ChatcomError("CHATCOM_E_AWAITING_CONFIRMATION",
+                           f"this step makes {len(calls)} image calls; --approve-calls was {approve_calls}",
+                           f"Approve exactly that count: --approve-calls {len(calls)}. Cached images cost nothing "
+                           "and are not counted twice.", recovery="ask",
+                           context={"calls": len(calls),
+                                    "next_command": f"chatcom cast {show.slug} --accept-data-flow "
+                                                    f"--approve-calls {len(calls)}"})
+    needed = {r[6:] for c in calls for r in c.refs if r.startswith("photo:")}
+    photos = _photos(show, base, needed)
+    pinned = base.get("image_model")
+    _check_painter(base, painter)
+    models = [pinned] if pinned else ([painter.model] if painter.mode != "gemini" else
+                                      [painter.model] + ([FALLBACK_MODEL] if painter.model != FALLBACK_MODEL else []))
+    last_error = None
+    calls_before = painter.calls
+    painter.budget = calls_before + approve_calls  # the approved count is a hard cap on billed calls
+    try:
+        for model in models:
+            if painter.mode == "gemini":
+                painter.model = model
+            try:
+                result = _batch(show, painter, model, base, bible_next, beats, photos, say)
+                break
+            except SwitchModel as e:
+                last_error = f"{model}: {e}"
+                say(f"casting: {model} cannot finish the batch ({e}); moving the whole batch to the next model")
+        else:
+            fix = ("Run `chatcom cast` again later; images already made are kept." if not pinned else
+                   f"This show is cast with {pinned} and keeps that model. Run `chatcom cast` again later. If "
+                   f"Google has retired the model, `chatcom recast {show.slug}` redraws the whole show on the "
+                   "current one.")
+            raise ChatcomError("CHATCOM_E_PAINTER_UNAVAILABLE", f"no image model could finish casting: {last_error}",
+                               fix, recovery="retry" if not pinned else "ask", side_effects="partial",
+                               context={"models": models})
+    except BudgetSpent:
+        spent = painter.calls - calls_before
+        raise ChatcomError("CHATCOM_E_AWAITING_CONFIRMATION",
+                           f"casting needs more image calls than the {approve_calls} approved (retries, a "
+                           f"redraw, a model switch or a refused photo); it stopped after {spent}",
+                           f"Images already made are kept and cost nothing again. Ask the operator, then run "
+                           f"`chatcom cast {show.slug}` to see the new count.", recovery="ask",
+                           side_effects="partial", context={"calls_billed": spent}) from None
+    finally:
+        # the ledger records every billed call, whatever way the run ends
+        spent = painter.calls - calls_before
+        if spent:
+            st_now = store.read_json(show.state_path(code))
+            st_now["image_calls"] = st_now.get("image_calls", 0) + spent
+            store.write_json(show.state_path(code), st_now)
+        painter.budget = None
+    sheet_next, refused, _ = result
+    paid = spent
+    check("cast", sheet_next, code="CHATCOM_E_BIBLE_INVALID", what="the cast sheet casting made is not valid",
+          fix="This is a chatcom bug: report it with the run log.")
+    store.write_json(nxt_path, sheet_next)
+    st_now = store.read_json(show.state_path(code))  # holds the ledger written above
+    st2 = state_ops.advance(st_now, "cast", store.now()) if st_now["stage"] == "drafted" else st_now
+    store.write_json(show.state_path(code), st2)
     return {"episode": code, "stage": "cast", "calls": len(calls), "paid": paid, "refused": refused,
             "cast_next": str(nxt_path), "model": sheet_next["image_model"]}
+
+
+def recast(show: store.Show, painter, *, member: str | None = None, photo: str | None = None,
+           no_photo: bool = False, accepted: bool, approve_calls: int | None, say=print) -> dict:
+    """Draw again: one member (6 calls, with a new photo or none), or the whole
+    show (style frame, every member, every set). A whole recast lets the show
+    pick its image model again, so it is also how a show leaves a retired model.
+
+        reset in memory -> notice + exact count -> cast.next.json reset, the
+        episode back to `drafted` -> cast as usual (a stop resumes with `chatcom cast`)
+
+    Each recast is a new take: new content keys (never the cached drawing) and
+    new file names (an episode already made keeps its pictures)."""
+    with show.lock():
+        code, st, ep, nxt_path, base = _episode(show)
+        if st["stage"] not in ("drafted", "cast"):
+            state_ops.reopen_cast(st, store.now())  # raises with the fix
+        bible_next = store.read_json(ep / "bible.next.json")
+        sheet = _reset(copy.deepcopy(base), bible_next["cast"], member, photo, no_photo)
+        _check_painter(sheet, painter)  # before anything is written: a refusal leaves the episode as it was
+        beats = store.read_json(ep / "beats.json")
+        n = len(plan_for(show, bible_next, sheet, beats))
+        what = f"--member {_quote(member)}" + (f" --photo {_quote(photo)}" if photo else "") + \
+               (" --no-photo" if no_photo else "") if member else ""
+        command = f"chatcom recast {show.slug} {what}".rstrip() + f" --accept-data-flow --approve-calls {n}"
+        scope = f"{member} again (6 poses)" if member else "the whole show again (style, cast and sets)"
+        if member and n != len(rules.POSES):
+            scope += ", plus the images this episode still needs"
+        if not accepted or approve_calls != n:
+            text = NOTICE[painter.mode] + f" Recasting draws {scope}: {n} image calls."
+            raise ChatcomError("CHATCOM_E_AWAITING_CONFIRMATION", text if not accepted else
+                               f"this recast makes {n} image calls; --approve-calls was {approve_calls}",
+                               f"Ask the operator. If they agree, run `{command}`.", recovery="ask",
+                               context={"notice": text, "calls": n, "next_command": command})
+        needed = {r[6:] for c in plan_for(show, bible_next, sheet, beats) for r in c.refs if r.startswith("photo:")}
+        _photos(show, sheet, needed)  # a missing or unreadable photo stops here, before anything changes
+        # state first: a stop between the two writes leaves `drafted` with the old, complete sheet
+        store.write_json(show.state_path(code), state_ops.reopen_cast(st, store.now()))
+        store.write_json(nxt_path, sheet)
+        return _cast(show, painter, accepted=True, approve_calls=n, say=say)
+
+
+def _check_painter(sheet: dict, painter) -> None:
+    """A show keeps one image model: refuse a painter or --image-model that differs from the pinned one."""
+    pinned = sheet.get("image_model")
+    if pinned and (painter.mode == "replay") != (pinned == "replay-painter"):
+        raise ChatcomError("CHATCOM_E_USAGE", f"this show is cast with {pinned}; the {painter.mode} painter cannot "
+                           "add to it", "A show keeps one image model. Use the same painter as its first cast.",
+                           context={"image_model": pinned})
+    if pinned and painter.mode == "gemini" and getattr(painter, "requested", None) not in (None, pinned):
+        raise ChatcomError("CHATCOM_E_USAGE", f"this show is cast with {pinned}, not {painter.requested}",
+                           "A show keeps one image model: drop --image-model.", context={"image_model": pinned})
+
+
+def _quote(text: str) -> str:
+    import shlex
+    return shlex.quote(text)
+
+
+def _reset(sheet: dict, members: list[dict], member: str | None, photo: str | None, no_photo: bool) -> dict:
+    if photo and no_photo:
+        raise ChatcomError("CHATCOM_E_USAGE", "--photo and --no-photo together", "Pass one of them.")
+    if not member:
+        if photo or no_photo:
+            raise ChatcomError("CHATCOM_E_USAGE", "--photo and --no-photo need --member",
+                               "Name the member: `chatcom recast <show> --member NAME --photo PATH`.")
+        sheet.update(take=sheet.get("take", 0) + 1, take_id=_take_id(), image_model=None, style_sheet=None)
+        for m in sheet["members"]:
+            m.update(poses={}, take=m.get("take", 0) + 1, take_id=_take_id())
+        for b in sheet["backgrounds"]:
+            b.update(file=None, key=None)
+        return sheet
+    name = _member_name(member, members)
+    entry = next((m for m in sheet["members"] if m["name"] == name), None)
+    if entry is None:
+        bm = next(m for m in members if m["name"] == name)
+        entry = {"name": name, "source": bm["source"], "reason": bm["reason"], "photo": None, "poses": {}}
+        sheet["members"].append(entry)
+    entry.update(poses={}, take=entry.get("take", 0) + 1, take_id=_take_id())
+    if photo:
+        src = Path(photo).expanduser()
+        if not src.is_file():
+            raise ChatcomError("CHATCOM_E_IMAGE_UNREADABLE", f"no photo at {src}", "Check the path and try again.",
+                               context={"member": name})
+        entry.update(source="photo", reason=None, photo=str(src.resolve()))
+    if no_photo:
+        entry.update(source="behavior", reason="operator_choice", photo=None)
+    return sheet
+
+
+def _take_id() -> str:
+    """Goes into the content key. The take counter alone can repeat (a discarded
+    cast.next.json starts again from cast.json), and a repeat would hand back the
+    abandoned take's cached drawing as if it were new."""
+    import secrets
+    return secrets.token_hex(6)
+
+
+def _member_name(name: str, members: list[dict]) -> str:
+    """A cast member by name or nickname, any case."""
+    for m in members:
+        if name.casefold() in (n.casefold() for n in (m["name"], *m.get("aliases", []))):
+            return m["name"]
+    raise ChatcomError("CHATCOM_E_UNKNOWN_MEMBER", f"'{name}' is not in this show's cast",
+                       f"Use a cast member's name: {', '.join(m['name'] for m in members)}.",
+                       context={"cast": [m["name"] for m in members]})
 
 
 def _batch(show, painter, model, base, bible_next, beats, photos, say):
@@ -261,7 +372,7 @@ def _batch(show, painter, model, base, bible_next, beats, photos, say):
     for c in rules.plan(sheet, [], look, title):
         if c.kind == "style":
             data, mime, key = finish(c, run.draw(c, photos), "style")
-            path = show.dir / "cast" / f"style{EXT.get(mime, '.png')}"
+            path = show.dir / "cast" / f"style{_take(sheet)}{EXT.get(mime, '.png')}"
             store.write_atomic(path, data)
             sheet["style_sheet"] = str(path.relative_to(show.dir))
     if "style" not in run.made and sheet.get("style_sheet"):
@@ -313,7 +424,7 @@ def _batch(show, painter, model, base, bible_next, beats, photos, say):
     for c, got in done:
         data, mime, key = finish(c, got, f"{c.kind}:{c.member or c.background}:{c.pose or ''}")
         if c.kind != "pose":
-            path = show.dir / "cast" / "backgrounds" / f"{c.background}{EXT.get(mime, '.png')}"
+            path = show.dir / "cast" / "backgrounds" / f"{c.background}{_take(sheet)}{EXT.get(mime, '.png')}"
             store.write_atomic(path, data)
             entry = next((b for b in sheet["backgrounds"] if b["id"] == c.background), None)
             if entry is None:
@@ -358,12 +469,17 @@ def _neutral_call(sheet, by_name, members, m, look, title, looks):
             if c.member == m["name"] and c.pose == "neutral"]
 
 
+def _take(entry: dict) -> str:
+    """A recast take gets its own file names, so an episode already made keeps its pictures."""
+    return f".t{entry['take']}" if entry.get("take") else ""
+
+
 def _place_pose(show, entry, pose, data, mime, key):
     folder = show.dir / "cast" / "members" / _slug(entry["name"])
-    raw = folder / f"{pose}.raw{EXT.get(mime, '.png')}"
+    raw = folder / f"{pose}{_take(entry)}.raw{EXT.get(mime, '.png')}"
     store.write_atomic(raw, data)
     try:
-        cut = cutout.key(raw, folder / f"{pose}.png")
+        cut = cutout.key(raw, folder / f"{pose}{_take(entry)}.png")
     except ChatcomError:
         # the cached drawing cannot be cut out: drop it, so the next run draws it again
         for f in (show.dir / "cache" / "images").glob(f"{key}.*"):

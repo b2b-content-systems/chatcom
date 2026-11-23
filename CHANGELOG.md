@@ -28,6 +28,12 @@ Next Step 3, part 1: casting.
 - A reply with no image and no policy reason (Gemini's `NO_IMAGE`, or text only) is asked once more before it counts
   as a refusal.
 
+- `chatcom recast <show> [--member NAME [--photo PATH | --no-photo]]`: draw one member again (6 calls), or the whole
+  show (style, cast and sets; it picks the image model again, so a show can leave a retired model). It asks first
+  with the exact count. Each recast is a new take: new image keys, so it never returns the cached drawing, and new
+  file names, so pictures an episode already used stay as they were. The episode goes back to `drafted` until the
+  redraw finishes; a stop resumes with `chatcom cast`.
+
 ### Changed
 - No starting look uses green, and every pose asks for nothing green on the character: the key took a forest-green
   top half out of the picture. Members with that look are drawn again.

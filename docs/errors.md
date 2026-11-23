@@ -41,7 +41,7 @@ The export holds no messages. Exit 2.
 No messages after the last episode's cursor. Export the chat again so it includes this week, or pass `--bottle` for a callback episode. No model was called. Exit 2.
 
 ## chatcom_e_unknown_member
-A name in setup or a flag is not a sender in the chat. The fix lists the closest senders. Names match exactly, then case-folded. Exit 2.
+A name in setup or a flag is not a sender in the chat. The fix lists the closest senders. Names match exactly, then case-folded. `chatcom recast --member NAME` needs a cast member's name or nickname, in any case; its fix lists the cast. Exit 2.
 
 ## chatcom_e_setup_invalid
 `setup.json` failed its schema. The error gives the JSON path, the bad value and what is allowed. Exit 2.
@@ -86,7 +86,7 @@ A transcript has a line chatcom cannot read as written: a header other than `# s
 ## chatcom_e_image_unreadable
 A screenshot is not a PNG, JPEG, WebP or HEIC image, is over 40 MB or 60 million pixels, could not be decoded,
 or is HEIC on a computer other than a Mac. The error names the file. Pass the screenshots as your phone saved
-them, or save that one as PNG. Exit 2.
+them, or save that one as PNG. `chatcom recast --photo PATH` stops here too when no file is at that path. Exit 2.
 
 ## chatcom_e_too_many_images
 More screenshots (or tiles: a very tall screenshot is split into several) than the limit, 40 by default. Import
@@ -119,7 +119,8 @@ key and run the command again: reads already done are cached and not paid for tw
 Casting could not draw an image. Either the image model stopped (no `GEMINI_API_KEY`, a revoked key, or an
 exhausted quota), or neither the default model nor the fallback could finish the batch. Images already drawn are
 kept in the show's cache and are not paid for twice: fix the key or wait for the quota, then run `chatcom cast`
-again. Exit 4.
+again. A show keeps the image model it was first cast with. If Google has retired that model,
+`chatcom recast <show>` draws the whole show again on the current one. Exit 4.
 
 ## chatcom_e_export_outside_inbox
 In skill mode (`chatcom ingest` for the session writer, and `chatcom episode --dry-run` without a terminal) chatcom
@@ -131,7 +132,7 @@ pass that path. Exit 2.
 Another chatcom run holds this show's lock. A lock whose process is gone is cleared automatically. Exit 2.
 
 ## chatcom_e_state
-A step ran out of order (for example `write-submit` before `ingest --accept-data-flow`, or on an episode that is already drafted). `chatcom status <show>` prints the next command. Exit 2.
+A step ran out of order (for example `write-submit` before `ingest --accept-data-flow`, or on an episode that is already drafted, or `recast` before the draft or after the render). `chatcom status <show>` prints the next command. Exit 2.
 
 ## chatcom_e_beats_invalid
 The writer's `beats.json` failed validation. Every problem is listed with its JSON path. Fix all of them and submit the whole file again. Attempts 1 and 2 exit 2; the third failure exits 4. Exit 2.
@@ -140,7 +141,7 @@ The writer's `beats.json` failed validation. Every problem is listed with its JS
 Unknown IANA timezone. Exit 2.
 
 ## chatcom_e_awaiting_confirmation
-A command that would send chat text to a model stops here and prints the data-flow notice; no message is read or shown. `chatcom ingest` without `--accept-data-flow` always stops here, and so does `chatcom episode` with no terminal to ask. A command whose writer mode differs from the one the operator accepted at ingest stops here too, with the new notice. With `--json`, stdout carries `{notice_text, data_flow, next_command}`. The skill relays the notice to the operator and continues only after they agree. Exit 6.
+A command that would send chat text to a model stops here and prints the data-flow notice; no message is read or shown. `chatcom ingest` without `--accept-data-flow` always stops here, and so does `chatcom episode` with no terminal to ask. A command whose writer mode differs from the one the operator accepted at ingest stops here too, with the new notice. With `--json`, stdout carries `{notice_text, data_flow, next_command}`. The skill relays the notice to the operator and continues only after they agree. `chatcom cast` and `chatcom recast` stop here with the image notice and the exact number of image calls, and again when `--approve-calls` is not that number; the `next_command` carries both flags. Exit 6.
 
 ## chatcom_e_writer_gave_up
 The writer failed validation three times in one prep cycle (`write-prep` starts a new cycle; at most three per episode). Fixed message: "Writer step did not complete. No bible change. Draft kept at <path>. Ask the operator before switching modes: CLI mode sends chat text to Anthropic with your key, and to Google if the fallback fires." Side effects: partial (the draft and the episode state are kept). Exit 4.

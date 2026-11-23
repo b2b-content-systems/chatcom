@@ -188,9 +188,10 @@ episode; then `CHATCOM_E_READER_GAVE_UP` or `CHATCOM_E_WRITER_GAVE_UP`, exit 4,
 
 `ingest --export transcript.txt` on an episode at `read` replaces the reader
 output. Any other `--export` on an episode at `copied` or `read` exits 2 with
-`CHATCOM_E_IMPORT_IN_PROGRESS` unless `--replace` is passed. The bible changes
-only at `committed`. `chatcom status <show>` prints the stage, attempt counts,
-the lock holder and the literal next command.
+`CHATCOM_E_IMPORT_IN_PROGRESS` unless `--replace` is passed. `chatcom recast`
+moves an episode at `drafted` or `cast` back to `drafted` until the redraw
+finishes. The bible changes only at `committed`. `chatcom status <show>`
+prints the stage, attempt counts, the lock holder and the literal next command.
 
 ## Consent
 
@@ -274,7 +275,7 @@ cleared automatically, so there is no unlock command.
 <!-- check_spec:flags -->
 | Flag | Commands | Meaning | PR |
 |---|---|---|---|
-| `--accept-data-flow` | new, ingest, episode, cast | answer the data-flow notice (on `new`, for screenshots; on `cast`, for images) | 1 |
+| `--accept-data-flow` | new, ingest, episode, cast, recast | answer the data-flow notice (on `new`, for screenshots; on `cast` and `recast`, for images) | 1 |
 | `--source` | new, ingest, episode | force the source adapter | 1 |
 | `--thread` | new, ingest, episode | pick one chat in a multi-chat export | 1 |
 | `--writer` | new, episode | `anthropic` or `replay` (the skill's `ingest` is always session mode); on `new` it picks the screenshot reader and notice | shipped |
@@ -288,9 +289,12 @@ cleared automatically, so there is no unlock command.
 | `--replay-reads` | new, episode | recorded screenshot reads for the ReplayReader (CI, the demo) | 4 |
 | `--import` | read-prep, read-submit | a pending screenshot import from `new` in skill mode (no show yet) | 5 |
 | `--reader-model` | new, episode | override the reader model | 6 |
-| `--approve-calls` | cast | the exact number of image calls the notice named | 8 |
-| `--painter` | cast | `gemini` (default) or `replay` (no network) | 8 |
-| `--image-model` | cast | the image model; a show keeps one | 8 |
+| `--approve-calls` | cast, recast | the exact number of image calls the notice named | 8 |
+| `--painter` | cast, recast | `gemini` (default) or `replay` (no network) | 8 |
+| `--image-model` | cast, recast | the image model; a show keeps one (a whole `recast` may pick a new one) | 8 |
+| `--member` | recast | the one member to draw again (6 calls); without it, the whole show | 8 |
+| `--photo` | new, recast | a reference photo: `NAME=PATH` on `new` (repeatable); a path for the `--member` on `recast` | 8 |
+| `--no-photo` | new, recast | cast from how they text: a name on `new` (repeatable); the `--member` on `recast` | 8 |
 <!-- /check_spec:flags -->
 
 ## Tests that must exist
