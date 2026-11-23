@@ -81,8 +81,10 @@ _ENCRYPTION = ("end-to-end encrypted", "ende-zu-ende-verschlüsselt", "cifrados 
 _PHONE = re.compile(r"^\+?[\d\s()\-‑.]{7,}$")
 # A phone number inside message text: 10+ digits with phone separators only
 # (dates and times have fewer digits or other separators).
-_PHONE_IN_TEXT = re.compile(r"(?<![\w+@])(@?)(\+?\d[\d \u00a0()\-\u2011.]{7,}\d)(?!\w)")
+_PHONE_IN_TEXT = re.compile(r"(?<![\w+@/=.])(@?)(\+?\d[\d \u00a0()\-\u2011.]{6,}\d)(?![\w:/])")
 MIN_PHONE_DIGITS = 10
+MAX_PHONE_DIGITS = 15  # E.164; longer runs are ids, card or account numbers
+_ISO_DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
 
 
 @dataclass
@@ -154,14 +156,23 @@ def _read_zip(p: Path) -> str:
             raise ChatcomError("CHATCOM_E_EXPORT_UNREADABLE",
                                f"{info.filename} unpacks to {info.file_size} bytes, over the {MAX_TXT_BYTES} byte limit",
                                "Export a shorter range of the chat.")
-        with zf.open(info) as fh:
-            data = fh.read(MAX_TXT_BYTES + 1)
+        try:
+            with zf.open(info) as fh:
+                data = fh.read(MAX_TXT_BYTES + 1)
+        except (zipfile.BadZipFile, NotImplementedError, RuntimeError, OSError) as e:
+            # encrypted, corrupt (CRC) or an unsupported compression method
+            raise ChatcomError("CHATCOM_E_EXPORT_ZIP", f"cannot read {info.filename} inside {p.name} ({type(e).__name__})",
+                               "Re-export the chat from WhatsApp, or pass the .txt inside it.") from None
         return _decode(data, info.filename)
 
 
 def _decode(data: bytes, name: str) -> str:
     if data.startswith((b"\xff\xfe", b"\xfe\xff")):
-        return data.decode("utf-16")
+        try:
+            return data.decode("utf-16")
+        except UnicodeDecodeError:
+            raise ChatcomError("CHATCOM_E_EXPORT_UNREADABLE", f"{name} is not valid UTF-16 text",
+                               "Pass the WhatsApp export unchanged.") from None
     try:
         return data.decode("utf-8-sig")
     except UnicodeDecodeError:
@@ -410,6 +421,12 @@ def _digits(s: str) -> str:
     return re.sub(r"\D", "", s)
 
 
+def _phone_key(s: str) -> str:
+    # The last 10 digits: the same number written with or without its
+    # country code (+1 555 010 2233, 555.010.2233) is one person.
+    return _digits(s)[-10:]
+
+
 def _alias_map(aliases: dict[str, list[str]]) -> dict[str, str]:
     out: dict[str, str] = {}
     for canon, others in aliases.items():
@@ -417,21 +434,21 @@ def _alias_map(aliases: dict[str, list[str]]) -> dict[str, str]:
             o = normalize_text(o)
             out[o.casefold()] = canon
             if _PHONE.match(o):
-                out["#" + _digits(o)] = canon
+                out["#" + _phone_key(o)] = canon
     return out
 
 
 def phone_label(number: str) -> str:
     """A stable stand-in for a phone number: the same number gets the same
     label in every export, whatever order people appear in."""
-    return "Unnamed " + hashlib.sha256(_digits(number).encode()).hexdigest()[:4]
+    return "Unnamed " + hashlib.sha256(_phone_key(number).encode()).hexdigest()[:6]
 
 
 def _canonical(sender: str, alias_map: dict[str, str], masked: dict[str, str]) -> str:
     if sender.casefold() in alias_map:
         return alias_map[sender.casefold()]
     if _PHONE.match(sender):
-        key = "#" + _digits(sender)
+        key = "#" + _phone_key(sender)
         if key in alias_map:
             return alias_map[key]
         masked.setdefault(sender, phone_label(sender))
@@ -446,7 +463,13 @@ def mask_numbers(text: str, alias_map: dict[str, str]) -> str:
     the same label as their messages."""
     def repl(m: re.Match) -> str:
         at, number = m.group(1), m.group(2)
-        if len(_digits(number)) < MIN_PHONE_DIGITS:
-            return m.group(0)
-        return at + (alias_map.get("#" + _digits(number)) or phone_label(number))
+        n = len(_digits(number))
+        groups = re.split(r"[^\d]+", number.lstrip("+"))
+        grouped = number.startswith("+") or len(groups) >= 3
+        if re.fullmatch(r"\d+\.\d+", number):
+            return m.group(0)  # a decimal number
+        if (n < (9 if grouped else MIN_PHONE_DIGITS) or n > MAX_PHONE_DIGITS or _ISO_DATE.search(number)
+                or sum(len(g) == 1 for g in groups) > 1):
+            return m.group(0)  # a date, a list of numbers or a long id, not a phone
+        return at + (alias_map.get("#" + _phone_key(number)) or phone_label(number))
     return _PHONE_IN_TEXT.sub(repl, text) if text else text

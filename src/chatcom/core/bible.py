@@ -47,6 +47,14 @@ def pick_cast(counts: Counter, *, cast: list[str] | None = None, no_cast: list[s
     return chosen, chorus
 
 
+def new_speakers(bible: dict, messages: list[dict]) -> list[str]:
+    """Senders in this window who are neither cast nor chorus yet (a member
+    who was quiet in episode 1, or joined since). They speak as chorus."""
+    known = {m["name"] for m in bible["cast"]} | set(bible["chorus"])
+    counts = Counter(m["sender"] for m in messages if m["sender"] not in known)
+    return [s for s, _ in counts.most_common()]
+
+
 def new_bible(*, slug: str, title: str | None, look: str, operator_sender: str, timezone: str,
               created: str, cast: list[str], chorus: list[str], photos: dict[str, str] | None = None,
               no_photo: list[str] | None = None, aliases: dict[str, list[str]] | None = None) -> dict:
@@ -136,13 +144,15 @@ def windowed(bible: dict) -> dict:
     }
 
 
-def apply_beats(bible: dict, beats: dict, *, window_entry: dict, writer: dict) -> dict:
+def apply_beats(bible: dict, beats: dict, *, window_entry: dict, writer: dict,
+                extra_chorus: list[str] | tuple = ()) -> dict:
     """The bible after this episode commits. Does not mutate its input."""
     out = copy.deepcopy(bible)
     code = current_code(out)
     if beats["episode"] != code:
         raise ChatcomError("CHATCOM_E_STATE", f"beats are for {beats['episode']} but the show is on {code}",
                            "Rerun `chatcom write-prep` and write the beats for the episode it names.")
+    out["chorus"] += [n for n in extra_chorus if n not in out["chorus"]]
     if out["show"]["title"] is None and beats.get("show_title"):
         out["show"]["title"] = beats["show_title"]
     upd = beats["bible_update"]

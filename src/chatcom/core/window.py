@@ -106,7 +106,7 @@ def select(messages: list[dict], previous_cursor: dict | None, *, since: datetim
             ref = msgs[-1]
             return Window([], _t(ref), _t(ref), dict(previous_cursor), None, excluded)
         last = msgs[-1]["time"] if msgs else "none in the chosen range"
-        if previous_cursor is None:
+        if previous_cursor is None or not msgs:
             raise ChatcomError("CHATCOM_E_STALE_EXPORT",
                                f"no messages in the chosen window (export ends {last})",
                                "Widen --since/--until, or export the chat again.",

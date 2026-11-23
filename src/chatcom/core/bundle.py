@@ -25,7 +25,7 @@ def build(bible: dict, cast_sheet: dict, window_messages: list[dict], *,
         "budget": budget.summary(bible_ops.episode_number(code)),
         "ids": {
             "cast": [m["name"] for m in bible["cast"]],
-            "chorus": bible["chorus"],
+            "chorus": bible["chorus"] + bible_ops.new_speakers(bible, window_messages),
             "poses": cast_sheet["poses"],
             "backgrounds": [{"id": b["id"], "description": b["description"]} for b in cast_sheet["backgrounds"]],
         },

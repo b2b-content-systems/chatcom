@@ -279,3 +279,99 @@ def test_store_writes_are_atomic_and_private(chatcom_home):
     assert json.loads(target.read_text()) == {"a": 1}
     assert not list(target.parent.glob(".f.json.*.tmp"))
     assert oct(os.stat(store.home()).st_mode & 0o777) == "0o700"
+
+
+# Value: protects=masking leaves dates, times, lists, URL ids and long account numbers alone; fails_when=the pattern widens back to any 10-digit run; why_new=the fix-check saw dates become 'Unnamed' people; seam=none; no_claim=every national phone format
+@pytest.mark.parametrize("text", ["meet 2024-01-15 10:30", "order 1 2 3 4 5 6 7 8 9 10",
+                                  "see https://x.com/status/1234567890123", "iban DE89 3704 0044 0532 0130 00"])
+def test_masking_spares_non_phone_numbers(text):
+    assert whatsapp.mask_numbers(text, {}) == text
+
+
+def test_garbage_lock_is_reclaimed_when_old(lake_show):
+    lock = lake_show.dir / ".lock"
+    lock.write_text("garbage")
+    old = time.time() - 3600
+    os.utime(lock, (old, old))
+    with lake_show.lock():
+        pass
+
+
+def test_bottle_with_empty_range_points_at_until():
+    text, _ = whatsapp.read_export(LAKE)
+    msgs = whatsapp.parse(text, TZ).messages
+    with pytest.raises(ChatcomError) as e:
+        window.select(msgs, {"minute": "2026-01-16T23:01Z", "hash": msgs[-1]["id"]}, bottle=True,
+                      until=datetime(2025, 1, 1, tzinfo=timezone.utc))
+    assert "--since/--until" in e.value.fix
+
+
+def test_same_number_with_or_without_country_code_is_one_label():
+    assert whatsapp.mask_numbers("555.010.2233", {}) == whatsapp.mask_numbers("+1 (555) 010-2233", {})
+
+
+def test_nine_digit_grouped_numbers_are_masked_decimals_are_not():
+    out = whatsapp.mask_numbers("call 612 34 56 78 or +34 612 345 678, pi is 3.14159265358", {})
+    assert "612" not in out and "3.14159265358" in out
+
+
+# Value: protects=a member quiet in episode 1 or new since can speak as chorus and is added to the bible; fails_when=chorus comes only from episode 1's window and new senders burn writer attempts; why_new=adversarial review; seam=none; no_claim=casting new members
+def test_quiet_and_new_members_speak_as_chorus(beats_s01e01):
+    import copy
+    from chatcom.core import beats as beats_ops, bible as bible_ops
+    show, info = app.new_show(str(LAKE), {"operator_sender": "Dave", "slug": "lh2", "cast": ["Dave", "Mike", "Theo", "Priya"]}, tz=TZ)
+    assert "Sam" in info["chorus"]
+    b = json.loads(show.bible_path.read_text())
+    sheet = json.loads(show.cast_path.read_text())
+    msgs = [{"sender": "Zoe", "text": "hi", "id": "z" * 16, "time": "2026-01-16T18:00:00-05:00"}]
+    assert bible_ops.new_speakers(b, msgs) == ["Zoe"]
+    d = copy.deepcopy(beats_s01e01)
+    d["credits"] = [c for c in d["credits"] if c["name"] != "Sam"]
+    for sc in [d["cold_open"]] + d["scenes"]:
+        for bub in sc["bubbles"]:
+            if bub["speaker"] == "Sam":
+                bub["pose"] = None
+    d["bible_update"]["cast"] = [c for c in d["bible_update"]["cast"] if c["name"] != "Sam"]
+    d["scenes"][2]["bubbles"][1] = {"speaker": "Zoe", "text": "me", "pose": None, "sticker": None}
+    assert beats_ops.validate(d, bible=b, cast_sheet=sheet, new_messages=1, extra_chorus=["Zoe"]) == []
+    nxt = bible_ops.apply_beats(b, d, window_entry={"from": "2026-01-01T00:00:00+00:00", "to": "2026-01-02T00:00:00+00:00",
+                                "cursor": {"minute": "2026-01-02T00:00Z", "hash": "a" * 16}, "message_count": 1, "gap": None},
+                                writer={"mode": "replay", "model": "r", "attempts": 1}, extra_chorus=["Zoe"])
+    assert "Zoe" in nxt["chorus"]
+
+
+def test_claude_billing_400_falls_back_and_bad_json_is_unavailable(monkeypatch):
+    import http.client
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "x" * 12)
+    monkeypatch.setenv("GEMINI_API_KEY", "y" * 12)
+    gem = (200, {"modelVersion": "gemini-3.6-flash", "candidates": [{"content": {"parts": [{"text": "{}"}]}}]})
+    t, calls = _fake([(400, {"error": {"message": "Your credit balance is too low"}}), gem])
+    d = AnthropicWriter(transport=t).draft("b", "p")
+    assert d.model == "gemini-3.6-flash" and "account problem" in d.fallback_reason and len(calls) == 2
+    t, _ = _fake([ValueError("Expecting value")])
+    with pytest.raises(ChatcomError) as e:
+        AnthropicWriter(transport=t).draft("b", "p")
+    assert e.value.code == "CHATCOM_E_WRITER_UNAVAILABLE"
+    t, _ = _fake([http.client.IncompleteRead(b"")])
+    with pytest.raises(ChatcomError):
+        AnthropicWriter(transport=t).draft("b", "p")
+
+
+def test_episode_100_fits_the_schema():
+    from chatcom.core.schema import schema
+    import re as _re
+    assert _re.match(schema("beats")["properties"]["episode"]["pattern"], "S01E100")
+
+
+def test_corrupt_zip_member_is_a_coded_error(tmp_path):
+    import zipfile
+    p = tmp_path / "c.zip"
+    with zipfile.ZipFile(p, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("_chat.txt", "[1/2/26, 10:00:00 AM] Dave: " + "hi " * 200)
+    raw = bytearray(p.read_bytes())
+    i = raw.find(b"_chat.txt") + 40
+    raw[i:i + 20] = b"\x00" * 20  # break the compressed stream
+    p.write_bytes(bytes(raw))
+    with pytest.raises(ChatcomError) as e:
+        whatsapp.read_export(p)
+    assert e.value.code in ("CHATCOM_E_EXPORT_ZIP", "CHATCOM_E_EXPORT_UNREADABLE")

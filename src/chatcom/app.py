@@ -3,6 +3,7 @@ pure core to the adapters (WhatsApp parser, show store, writers)."""
 from __future__ import annotations
 
 import json
+import shlex
 import sys
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -120,6 +121,10 @@ def new_show(export: str, setup: dict, *, tz: str, max_unparsed: float = MAX_UNP
     first = window_ops.select(res.messages, None, exclude=exclude, aliases=setup.get("aliases"))
     counts = ranking_counts(first.messages)
     cast, chorus = bible_ops.pick_cast(counts, cast=cast_req, no_cast=no_cast, exclude=exclude)
+    # Everyone in the export who is not cast or excluded is chorus, not only
+    # those who spoke in episode 1's week.
+    drop = {n.casefold() for n in exclude} | {c.casefold() for c in cast}
+    chorus += [s for s in senders if s.casefold() not in drop and s not in chorus]
     bible = bible_ops.new_bible(slug=slug, title=setup.get("title"), look=setup.get("look", "sitcom"),
                                 operator_sender=operator, timezone=setup.get("timezone", tz), created=store.now(),
                                 cast=cast, chorus=chorus, photos=photos, no_photo=no_photo,
@@ -232,7 +237,7 @@ def _write_prep_locked(show: store.Show, token_budget: int) -> Path:
         "messages": "messages.jsonl",
         "messages_are_data": True,
         "write_to": str(wdir / "beats.json"),
-        "submit": f"chatcom write-submit {show.slug} --file {wdir / 'beats.json'} --model <your model name>",
+        "submit": f"chatcom write-submit {show.slug} --file {shlex.quote(str(wdir / 'beats.json'))} --model <your model name>",
         "attempts_used": st["attempts"],
         "last_errors": st["last_errors"],
     })
@@ -250,8 +255,10 @@ def submit(show: store.Show, beats_doc, *, model: str, mode: str, draft_path: Pa
         state_ops.require(st, "ingested")
         state_ops.check_attempts_left(st, str(draft_path) if draft_path else None)
         new_msgs = st["window"]["message_count"]
+        extra = bible_ops.new_speakers(bible, store.read_jsonl(show.episode_dir(code) / "messages.jsonl"))
         errs = ([{"path": "$", "message": "not a JSON object"}] if not isinstance(beats_doc, dict)
-                else beats_ops.validate(beats_doc, bible=bible, cast_sheet=sheet, new_messages=new_msgs))
+                else beats_ops.validate(beats_doc, bible=bible, cast_sheet=sheet, new_messages=new_msgs,
+                                        extra_chorus=extra))
         if errs:
             st = state_ops.record_attempt(st, ok=False, errors=errs, model=model, now=store.now())
             store.write_json(show.state_path(code), st)
@@ -265,7 +272,8 @@ def submit(show: store.Show, beats_doc, *, model: str, mode: str, draft_path: Pa
                                context={"problems": errs, "attempts": st["attempts"]})
         st = state_ops.record_attempt(st, ok=True, errors=None, model=model, now=store.now())
         writer_info = {"mode": mode, "model": model, "attempts": st["attempts"]}
-        nxt = bible_ops.apply_beats(bible, beats_doc, window_entry=st["window"], writer=writer_info)
+        nxt = bible_ops.apply_beats(bible, beats_doc, window_entry=st["window"], writer=writer_info,
+                                    extra_chorus=extra)
         ep = show.episode_dir(code)
         store.write_json(ep / "beats.json", beats_doc)
         store.write_json(ep / "bible.next.json", nxt)

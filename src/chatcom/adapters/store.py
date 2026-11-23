@@ -106,16 +106,19 @@ class Show:
     def lock(self):
         self.dir.mkdir(parents=True, exist_ok=True)
         path = self.dir / ".lock"
-        for _ in range(2):
+        for _ in range(3):
             try:
                 fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
                 break
             except FileExistsError:
                 try:
-                    pid = int(path.read_text().strip() or "0")
                     age = time.time() - path.stat().st_mtime
-                except (OSError, ValueError):
-                    pid, age = 0, 0.0
+                    raw = path.read_text().strip()
+                except FileNotFoundError:
+                    continue  # released between our create and our read: try again
+                except OSError:
+                    raw, age = "", 0.0
+                pid = int(raw) if raw.isdigit() else 0
                 # An empty lock is one another run just created and has not
                 # written its pid into yet: held, unless it is old.
                 held = _alive(pid) if pid else age < EMPTY_LOCK_GRACE_S

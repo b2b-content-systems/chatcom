@@ -17,7 +17,8 @@ def _words(text: str) -> int:
     return len(text.split())
 
 
-def validate(beats, *, bible: dict, cast_sheet: dict, new_messages: int) -> list[dict]:
+def validate(beats, *, bible: dict, cast_sheet: dict, new_messages: int,
+             extra_chorus: list[str] | tuple = ()) -> list[dict]:
     errs = problems("beats", beats)
     if errs:
         return errs
@@ -34,7 +35,7 @@ def validate(beats, *, bible: dict, cast_sheet: dict, new_messages: int) -> list
         err("$.show_title", "the show has no title yet: name it (at most 40 characters)")
 
     cast = {m["name"] for m in bible["cast"]}
-    chorus = set(bible["chorus"])
+    chorus = set(bible["chorus"]) | set(extra_chorus)
     poses = set(cast_sheet["poses"])
     known_bgs = {b["id"] for b in cast_sheet["backgrounds"]}
     new_locs: list[str] = []
