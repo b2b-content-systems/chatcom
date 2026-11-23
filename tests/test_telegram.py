@@ -273,3 +273,29 @@ def test_the_size_cap_is_enforced_on_the_bytes_read(tmp_path, monkeypatch):
     with pytest.raises(ChatcomError) as e:
         TG.load([CHAT], registry.Context(tz=TZ))
     assert e.value.code == "CHATCOM_E_EXPORT_UNREADABLE" and "limit" in e.value.what
+
+
+@pytest.mark.parametrize("field,value", [("poll", [1]), ("reactions", 5), ("reply_to_message_id", [1]),
+                                         ("id", [1]), ("text", {"x": 1})])
+def test_malformed_fields_are_unparsed_not_a_crash(field, value):
+    doc = json.loads((CHAT / "result.json").read_text("utf-8"))
+    doc["messages"][2][field] = value
+    if field == "reactions":
+        doc["messages"][2]["reactions"] = [{"emoji": "😂", "count": "many"}]
+    res = TG.parse(doc, TZ, key=UNKEYED)
+    assert len(res.messages) + len(res.unparsed) == 10
+
+
+def test_a_blank_reactor_is_a_deleted_account():
+    doc = json.loads((CHAT / "result.json").read_text("utf-8"))
+    doc["messages"][2]["reactions"][0]["recent"][0]["from"] = "  "
+    r = TG.parse(doc, TZ, key=UNKEYED).messages[1]["reactions"]
+    assert r[0]["sender"] == "Deleted Account"
+
+
+def test_a_masked_chat_name_can_be_passed_back(tmp_path):
+    d = _account(tmp_path, lambda doc: doc["chats"]["list"][1].update(name="+1 555 010 2299"))
+    with pytest.raises(ChatcomError) as e:
+        load(d)
+    shown = [c["name"] for c in e.value.context["chats"] if c["id"] == 4400777][0]
+    assert shown.startswith("Unnamed") and len(load(d, thread=shown).messages) == 2

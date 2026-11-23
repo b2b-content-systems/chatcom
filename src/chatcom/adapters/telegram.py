@@ -8,7 +8,8 @@ Two shapes:
 
 A whole-account export holds every chat, so `--thread NAME` picks one
 (CHATCOM_E_THREAD_REQUIRED lists them). Only that chat's messages are read;
-the account's personal information, contacts and other chats never are.
+the account's personal information, contacts and other chats' messages are
+never used (the chat list shows names only, with numbers masked).
 
 Sniffing peeks at the start of the file and never loads a large one whole.
 Media files in the export folder are never opened: a photo, sticker or voice
@@ -121,7 +122,9 @@ def pick_chat(doc: dict, thread: str | None, *, amap: dict | None = None, key: b
     names = [mask_numbers(normalize_text(_chat_label(c)), amap or {}, key) for c in chats]
     if thread is not None:
         want = thread.casefold()
-        hits = [c for c in chats if _chat_label(c).casefold() == want or str(c.get("id")) == thread]
+        # the name as exported, the masked name the list shows, or the id
+        hits = [c for c, shown in zip(chats, names)
+                if want in (_chat_label(c).casefold(), shown.casefold()) or str(c.get("id")) == thread]
         if len(hits) == 1:
             return hits[0]
         what = (f"{len(hits)} chats are named {thread!r}" if hits else f"no chat named {thread!r} in this export")
@@ -178,6 +181,55 @@ def _when(m: dict, tz: ZoneInfo, prev_utc: datetime | None) -> datetime:
     return localize(naive, tz, prev_utc)
 
 
+def _name(v) -> str:
+    return normalize_text(str(v or "")) or DELETED_ACCOUNT
+
+
+def _row(m: dict, aware: datetime, chat: dict, by_tg: dict, who, person, amap: dict, key: bytes | None) -> dict:
+    """One message, without its id (the caller numbers it)."""
+    raw_name = _name(m.get("from"))
+    label = phone_label(raw_name, key) if is_phone(raw_name) else who(raw_name)
+    media, extra = _media(m)
+    body = _text(m.get("text"))
+    if extra:
+        body = extra + ("\n" + body if body else "")
+    text = mask_numbers(normalize_text(body), amap, key)
+    reactions = []
+    for r in m.get("reactions") or []:
+        if not isinstance(r, dict):
+            continue
+        emoji = str(r.get("emoji") or ("⭐" if r.get("type") == "paid" else "custom"))
+        recent = [x for x in (r.get("recent") or []) if isinstance(x, dict)]
+        named = [person(_name(x.get("from"))) for x in recent]
+        reactions += [{"emoji": emoji, "sender": n, "count": 1} for n in named]
+        rest = int(r.get("count") or 0) - len(named)
+        if rest > 0:
+            reactions.append({"emoji": emoji, "sender": None, "count": rest})
+    reply_to, quote = None, None
+    peer = m.get("reply_to_peer_id")
+    target_id = m.get("reply_to_message_id")
+    # a reply to a message in another chat can share an id with one here
+    if peer in (None, chat.get("id")) and isinstance(target_id, (int, str)):
+        target = by_tg.get(target_id)
+        if target is not None:
+            reply_to = target["id"]
+            quote = {"sender": target["sender"], "text": target["text"][:QUOTE_CHARS]}
+    return {
+        "id": "",
+        "sender": person(raw_name),
+        "time": aware.isoformat(timespec="seconds"),
+        "time_precision": "exact",
+        "text": text,
+        "media": media,
+        "deleted": False,
+        "edited": bool(m.get("edited") or m.get("edited_unixtime")),
+        "reply_to": reply_to,
+        "reactions": reactions or None,
+        "quote": quote,
+        "source": {"adapter": "telegram", "label": label},
+    }
+
+
 def parse(doc: dict, tz_name: str, *, aliases: dict[str, list[str]] | None = None, key: bytes | None = None,
           thread: str | None = None) -> ParseResult:
     try:
@@ -214,49 +266,17 @@ def parse(doc: dict, tz_name: str, *, aliases: dict[str, list[str]] | None = Non
             unparsed.append((no, f"message {m.get('id', '?')} has no readable date"))
             continue
         prev_utc = aware.astimezone(timezone.utc)
-        raw_name = normalize_text(str(m.get("from") or DELETED_ACCOUNT)) or DELETED_ACCOUNT
-        label = phone_label(raw_name, key) if is_phone(raw_name) else who(raw_name)
-        media, extra = _media(m)
-        body = _text(m.get("text"))
-        if extra:
-            body = extra + ("\n" + body if body else "")
-        text = mask_numbers(normalize_text(body), amap, key)
-        minute = utc_minute(aware)
-        mid = message_hash(label, minute, ordinals[(label, minute)], text, media, False, key)
+        try:
+            row = _row(m, aware, chat, by_tg, who, person, amap, key)
+        except (AttributeError, TypeError, ValueError, OverflowError):
+            # valid JSON in a shape Telegram does not write: report it, never crash
+            unparsed.append((no, f"message {m.get('id', '?') if isinstance(m.get('id'), (int, str)) else '?'} "
+                                 "is not in Telegram's format"))
+            continue
+        label, minute = row["source"]["label"], utc_minute(aware)
+        row["id"] = message_hash(label, minute, ordinals[(label, minute)], row["text"], row["media"], False, key)
         ordinals[(label, minute)] += 1
-        reactions = []
-        for r in m.get("reactions") or []:
-            if not isinstance(r, dict):
-                continue
-            emoji = r.get("emoji") or ("⭐" if r.get("type") == "paid" else "custom")
-            recent = [x for x in (r.get("recent") or []) if isinstance(x, dict)]
-            named = [person(normalize_text(str(x.get("from") or DELETED_ACCOUNT))) for x in recent]
-            reactions += [{"emoji": emoji, "sender": n, "count": 1} for n in named]
-            rest = int(r.get("count") or 0) - len(named)
-            if rest > 0:
-                reactions.append({"emoji": emoji, "sender": None, "count": rest})
-        reply_to, quote = None, None
-        peer = m.get("reply_to_peer_id")
-        # a reply to a message in another chat can share an id with one here
-        target = by_tg.get(m.get("reply_to_message_id")) if peer in (None, chat.get("id")) else None
-        if target is not None:
-            reply_to = target["id"]
-            quote = {"sender": target["sender"], "text": target["text"][:QUOTE_CHARS]}
-        row = {
-            "id": mid,
-            "sender": person(raw_name),
-            "time": aware.isoformat(timespec="seconds"),
-            "time_precision": "exact",
-            "text": text,
-            "media": media,
-            "deleted": False,
-            "edited": bool(m.get("edited") or m.get("edited_unixtime")),
-            "reply_to": reply_to,
-            "reactions": reactions or None,
-            "quote": quote,
-            "source": {"adapter": "telegram", "label": label},
-        }
-        if m.get("id") is not None:
+        if isinstance(m.get("id"), (int, str)):
             by_tg[m["id"]] = row
         msgs.append(row)
     fmt = {"export": "account" if chat is not doc else "chat",

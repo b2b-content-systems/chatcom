@@ -20,8 +20,8 @@ For a later week, export again and save the folder into the show's inbox (`~/.ch
 
 ## A whole-account export
 
-**Settings → Advanced → Export Telegram data** exports every chat at once. CHATCOM reads only the chat you name
-with `--thread`, and never your profile, contacts or other chats. Without `--thread` it lists the chats
+**Settings → Advanced → Export Telegram data** exports every chat at once. CHATCOM loads the file but uses only the chat you
+name with `--thread`: your profile, your contacts and the messages of other chats are never stored, shown or sent. Without `--thread` it lists the chats
 (`CHATCOM_E_THREAD_REQUIRED`). Exporting just the one chat (above) is simpler and keeps everything else on
 your computer.
 

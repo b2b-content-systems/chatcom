@@ -9,7 +9,7 @@ Any group chat, PR 3 of 7: Telegram.
   Exact times, edits, media kinds, polls, reactions with names and counts, and replies (with a quote of the
   message they answer). Service lines are dropped.
 - A whole-account export is read one chat at a time with `--thread NAME` (or the chat id); without it,
-  `CHATCOM_E_THREAD_REQUIRED` lists the chats. Profile, contacts and other chats are never read.
+  `CHATCOM_E_THREAD_REQUIRED` lists the chats. Profile, contacts and the messages of other chats are never stored, shown or sent.
 - Sniffing recognizes Telegram exports by peeking at the start of `result.json`, never loading a large file
   whole. Other JSON files and Telegram's HTML export are refused.
 
