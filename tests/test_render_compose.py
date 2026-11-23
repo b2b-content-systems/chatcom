@@ -229,6 +229,18 @@ def test_a_font_that_does_not_match_its_fingerprint_is_not_kept(tmp_path, monkey
     runtime.fetch_font(name, dest, opener=lambda url, timeout: _Body(b"good"))
     assert dest.read_bytes() == b"good"
 
+    # Value: protects=a dropped download is a retryable preflight error and leaves no .part; fails_when=the OSError
+    # handler goes or stops cleaning up; why_new=only the fingerprint branch was tested; seam=network (opener faked);
+    # no_claim=real network behaviour
+    dest.unlink()
+
+    def offline(url, timeout):
+        raise OSError("network is unreachable")
+    with pytest.raises(ChatcomError) as e:
+        runtime.fetch_font(name, dest, opener=offline)
+    assert e.value.code == "CHATCOM_E_PREFLIGHT" and e.value.recovery == "retry" and "could not download" in e.value.what
+    assert not dest.exists() and not list(tmp_path.glob("*.part"))
+
 
 def test_a_missing_runtime_or_tool_is_a_preflight_error_with_the_fix(monkeypatch, capsys):
     if shutil.which("node"):
@@ -421,3 +433,58 @@ def test_the_licence_check_catches_an_unlisted_or_changed_asset(tmp_path):
     (copy / "fonts" / "Stray.woff2").unlink()
     (copy / "fonts" / "SpaceGrotesk-Bold.woff2").write_bytes(b"changed")
     assert mod.check_assets(str(copy)) == 1
+
+
+# Value: protects=a failed install never marks the runtime installed, and an old node is refused with the fix;
+# fails_when=installed.json is written before every step passes, the npm exit is ignored, or the node check goes;
+# why_new=install() and node_version() had no test; seam=none (fake node and npm on PATH);
+# no_claim=npm's own install and HyperFrames' Chrome download (CI render job)
+def _fake_tools(tmp_path, monkeypatch, node="v22.11.0", npm_exit=1) -> Path:
+    bin_ = tmp_path / "bin"
+    bin_.mkdir()
+    for tool, body in (("node", f'echo "{node}"'), ("npm", f'echo "npm broke"; exit {npm_exit}')):
+        f = bin_ / tool
+        f.write_text(f"#!/bin/sh\n{body}\n")
+        f.chmod(f.stat().st_mode | stat.S_IEXEC)
+    monkeypatch.setenv("PATH", f"{bin_}{os.pathsep}/usr/bin{os.pathsep}/bin")
+    return bin_
+
+
+def test_a_failed_install_is_not_marked_installed(tmp_path, monkeypatch):
+    _fake_tools(tmp_path, monkeypatch)
+    rt_dir = runtime.root()
+    rt_dir.mkdir(parents=True)
+    (rt_dir / "installed.json").write_text("{}")  # a stale marker from an earlier install
+    with pytest.raises(ChatcomError) as e:
+        runtime.install()
+    assert e.value.code == "CHATCOM_E_PREFLIGHT" and "npm ci failed" in e.value.what
+    assert e.value.side_effects == "partial" and runtime.INSTALL_COMMAND in e.value.fix
+    assert not (rt_dir / "installed.json").exists() and "npm broke" in (rt_dir / "install.log").read_text()
+    assert (rt_dir / "package-lock.json").is_file()
+
+
+def test_an_old_node_is_refused_with_the_fix(tmp_path, monkeypatch):
+    _fake_tools(tmp_path, monkeypatch, node="v18.19.0")
+    for step in (runtime.require, runtime.install):
+        with pytest.raises(ChatcomError) as e:
+            step()
+        assert e.value.code == "CHATCOM_E_PREFLIGHT" and "too old" in e.value.what and "22" in e.value.fix
+    assert not runtime.root().exists() or not (runtime.root() / "install.log").exists()
+
+
+# Value: protects=doctor reports the render runtime and a missing runtime alone does not fail it; fails_when=the
+# runtime row goes or the "needed from" pass rule breaks; why_new=test_doctor_runs accepts exit 0 or 3;
+# seam=none (shutil.which faked); no_claim=the other doctor rows
+def test_doctor_lists_the_runtime_and_a_missing_one_is_not_a_failure(capsys, monkeypatch):
+    monkeypatch.setattr(shutil, "which", lambda tool: "/bin/" + tool)
+    doctor = app.doctor
+    rows = {name: (good, detail) for name, good, detail in doctor()}
+    row = next(v for k, v in rows.items() if k.startswith("render runtime"))
+    assert row[0] is False and runtime.INSTALL_COMMAND in row[1]
+    monkeypatch.setattr(app, "doctor", lambda: [(n, g, d) for n, (g, d) in rows.items()])
+    code, out, _ = run(capsys, "doctor")
+    assert "render runtime" in out and code == (0 if all(g or "needed from" in d or "not set;" in d
+                                                         for g, d in rows.values()) else 3)
+    runtime.root().mkdir(parents=True)
+    (runtime.root() / "installed.json").write_text("{}")
+    assert next(g for n, g, _ in doctor() if n.startswith("render runtime")) is True
