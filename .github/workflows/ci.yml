@@ -36,3 +36,52 @@ jobs:
           chatcom doctor || true
           chatcom new examples/lake-house/_chat.txt --operator Dave --tz America/New_York --show lake-house
           chatcom episode lake-house --export examples/lake-house/_chat.txt --dry-run
+
+  # One real render through the pinned HyperFrames, inside a network namespace
+  # with only loopback (no route out), plus the CSP probe and a 360-px snapshot.
+  # The runtime install before it uses the network. Runs on main and on pull
+  # requests that touch render code. The job prints the 60 s render time (O14).
+  render:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with: { fetch-depth: 0 }
+      - id: scope
+        name: render code changed?
+        run: |
+          if [ "${{ github.event_name }}" != "pull_request" ]; then echo "run=true" >> "$GITHUB_OUTPUT"; exit 0; fi
+          if git diff --name-only "origin/${{ github.base_ref }}...HEAD" | grep -qE \
+            '^(src/chatcom/(adapters/(composer|hyperframes|runtime|tools)\.py|core/(render|budget)\.py|render_templates/|runtime/|assets/|app\.py)|tests/test_render|\.github/workflows/ci\.yml)'; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          fi
+      - if: steps.scope.outputs.run == 'true'
+        uses: actions/setup-python@v7
+        with: { python-version: "3.13" }
+      - if: steps.scope.outputs.run == 'true'
+        uses: actions/setup-node@v7
+        with: { node-version: "22" }
+      - if: steps.scope.outputs.run == 'true'
+        name: install chatcom, ffmpeg and the render runtime (network)
+        run: |
+          sudo apt-get update -q && sudo apt-get install -y -q ffmpeg
+          python -m pip install -e '.[dev]'
+          CHATCOM_HOME="$RUNNER_TEMP/rt" chatcom doctor --install
+      - if: steps.scope.outputs.run == 'true'
+        name: render with no network
+        run: |
+          sudo unshare --net -- sh -c '
+            ip link set lo up
+            if curl -s --max-time 5 https://github.com >/dev/null; then echo "network reachable: not a sandbox"; exit 1; fi
+            echo "no route out: ok"
+            exec sudo -u "$1" env PATH="$2" HOME="$3" CHATCOM_RENDER_RUNTIME_HOME="$4" CHATCOM_RENDER_SNAPSHOT_DIR="$5" \
+              CHATCOM_RENDER_REQUIRED=1 python -m pytest -q -rs --durations=5 tests/test_render_compose.py
+          ' sh "$USER" "$PATH" "$HOME" "$RUNNER_TEMP/rt" "$RUNNER_TEMP/snap"
+      - if: steps.scope.outputs.run == 'true' && always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: render-snapshot-360
+          path: ${{ runner.temp }}/snap
+          if-no-files-found: ignore

@@ -405,7 +405,7 @@ def test_every_skill_command_parses():
     src = Path(__file__).resolve().parent.parent / "src" / "chatcom"
     for f in ("core/state.py", "app.py", "cli.py", "adapters/whatsapp.py", "core/window.py"):
         text += (src / f).read_text("utf-8")
-    cmds = {c for c in _re.findall(r"`chatcom ([^`]+)`", text) if not c.startswith(("rewrite", "rollback"))}
+    cmds = {c for c in _re.findall(r"`chatcom ([^`]+)`", text) if not c.startswith("rollback")}
     assert len(cmds) >= 7
     fill = {"<show>": "lake-house", "<export>": "x.zip", "<beats.json path>": "b.json", "<your model name>": "m",
             "\"<their name in the chat>\"": "Dave", "\"<name>\"": "Sam",

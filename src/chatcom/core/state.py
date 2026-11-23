@@ -4,9 +4,10 @@ the bible and cast sheet change only at `committed`.
     ingested -> drafted -> cast -> rendered -> encoded -> committed
 
 Screenshot imports add `copied -> read` before `ingested` (docs/design/any-group-chat.md).
-This release stops at `cast` (beats.json, bible.next.json and cast.next.json
-are written; the bible and cast sheet are not). Render and encode arrive in
-Next Step 4. `chatcom recast` moves `cast` back to `drafted`.
+This release stops at `rendered` (beats.json, bible.next.json, cast.next.json
+and render/master.mp4 are written; the bible and cast sheet are not). Encode
+and commit arrive next. `chatcom recast` moves `cast` back to `drafted`;
+`chatcom rewrite` moves a drafted, cast or rendered episode back to `ingested`.
 
 Attempts: 3 submits per prep call, at most 3 prep cycles per episode. The
 data flow the operator accepted is recorded; a command with another flow
@@ -66,6 +67,17 @@ def reopen_cast(state: dict, now: str) -> dict:
     return {**state, "stage": "drafted", "updated": now}
 
 
+def reopen_draft(state: dict, now: str) -> dict:
+    """`chatcom rewrite`: the episode goes back to `ingested` with a fresh writer
+    budget. Everything else in the state (data flow, window, paid-call counts) stays."""
+    if state["stage"] not in ("drafted", "cast", "rendered"):
+        raise ChatcomError("CHATCOM_E_STATE", f"{state['episode']} is at stage '{state['stage']}'; rewrite works "
+                           "after the draft and before the encode", "`chatcom status` prints the next command.",
+                           context={"stage": state["stage"]})
+    return {**state, "stage": "ingested", "attempts": 0, "prep_cycles": 0, "last_errors": None,
+            "writer_model": None, "updated": now}
+
+
 def gave_up(state: dict, draft_path: str | None) -> ChatcomError:
     return ChatcomError("CHATCOM_E_WRITER_GAVE_UP",
                         f"the writer failed validation {state['attempts']} times in prep cycle "
@@ -123,5 +135,7 @@ def next_command(state: dict | None, slug: str) -> str:
     if stage == "drafted":
         return f"chatcom cast {slug}"
     if stage == "cast":
-        return "render arrives with Next Step 4; the cast is in cast.next.json"
+        return f"chatcom render {slug}"
+    if stage == "rendered":
+        return "encode arrives with the next release; the master is in render/master.mp4"
     return f"chatcom status {slug}"

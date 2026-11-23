@@ -191,12 +191,20 @@ def build_parser() -> argparse.ArgumentParser:
     w.add_argument("--file", required=True)
     w.add_argument("--model", required=True, help="the model that wrote the draft, as the session reports it")
 
+    rd = sub.add_parser("render", help="turn this week's cast episode into a 60-second video (no network, no keys)")
+    rd.add_argument("show", nargs="?")
+    rw = sub.add_parser("rewrite", help="send this week's episode back to the writer (keeps messages and drawings)")
+    rw.add_argument("show", nargs="?")
+    rw.add_argument("--episode", type=int, help="the episode number; only this week's episode for now")
+
     st = sub.add_parser("status", help="where this week's episode stands, and the next command")
     st.add_argument("show", nargs="?")
     mg = sub.add_parser("migrate", help="upgrade a show made by an older chatcom (backs it up first)")
     mg.add_argument("show", nargs="?")
     sub.add_parser("shows", help="list shows")
-    sub.add_parser("doctor", help="check this computer for what chatcom needs")
+    dr = sub.add_parser("doctor", help="check this computer for what chatcom needs")
+    dr.add_argument("--install", action="store_true",
+                    help="install the render runtime (HyperFrames, its Chrome, emoji and CJK fonts; uses the network)")
     return p
 
 
@@ -355,7 +363,7 @@ def cmd_episode(args) -> int:
          [f"{res['episode']} drafted by {res['model']} in {res['attempts']} attempt(s) "
           f"(source {win_source(show, res)}, resumed by {win.method})",
           f"bible after this episode (applied when the episode is committed): {res['bible_next']}",
-          "render and commit arrive with Next Step 4", res["beats"]])
+          f"next: chatcom cast {show.slug}", res["beats"]])
     return 0
 
 
@@ -439,7 +447,7 @@ def cmd_cast(args) -> int:
     if res["refused"]:
         lines.append("the image model declined these photos, so they are cast from how they text: "
                      + ", ".join(res["refused"]))
-    lines += ["render arrives with Next Step 4", res["cast_next"]]
+    lines += [f"next: chatcom render {show.slug}", res["cast_next"]]
     emit(args, {**res, "calls_billed": res["paid"] if painter.mode == "gemini" else 0}, lines)
     return 0
 
@@ -459,6 +467,21 @@ def cmd_recast(args) -> int:
                      + ", ".join(res["refused"]))
     lines.append(res["cast_next"])
     emit(args, {**res, "calls_billed": res["paid"] if painter.mode == "gemini" else 0}, lines)
+    return 0
+
+
+def cmd_render(args) -> int:
+    show = app.resolve_show(args.show)
+    res = app.render(show, say=lambda m: print(m, file=sys.stderr))
+    emit(args, res, [f"{res['episode']}: rendered {res['seconds']:.1f} s (the master; encode arrives next)",
+                     f"project: {res['project']}", res["master"]])
+    return 0
+
+
+def cmd_rewrite(args) -> int:
+    res = app.rewrite(app.resolve_show(args.show), args.episode)
+    emit(args, res, [f"{res['episode']}: back to the writer; the messages, transcript and drawings are kept",
+                     f"next: {res['next_command']}"])
     return 0
 
 
@@ -494,15 +517,18 @@ def cmd_shows(args) -> int:
 
 
 def cmd_doctor(args) -> int:
+    if args.install:
+        from chatcom.adapters import runtime
+        print(f"render runtime: {runtime.install(say=lambda m: print(m, file=sys.stderr))}", file=sys.stderr)
     ok = True
     for name, good, detail in app.doctor():
         print(f"{'ok ' if good else '-- '} {name}: {detail}")
-        ok &= good or "not needed yet" in detail or "not set;" in detail
+        ok &= good or "needed from" in detail or "not set;" in detail
     return 0 if ok else 3
 
 
 COMMANDS = {"new": cmd_new, "ingest": cmd_ingest, "episode": cmd_episode, "write-prep": cmd_write_prep,
-            "write-submit": cmd_write_submit, "read-prep": cmd_read_prep, "cast": cmd_cast, "recast": cmd_recast, "read-submit": cmd_read_submit, "status": cmd_status, "migrate": cmd_migrate, "shows": cmd_shows,
+            "write-submit": cmd_write_submit, "read-prep": cmd_read_prep, "cast": cmd_cast, "recast": cmd_recast, "render": cmd_render, "rewrite": cmd_rewrite, "read-submit": cmd_read_submit, "status": cmd_status, "migrate": cmd_migrate, "shows": cmd_shows,
             "doctor": cmd_doctor}
 
 
