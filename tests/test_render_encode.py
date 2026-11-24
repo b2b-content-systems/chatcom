@@ -133,8 +133,6 @@ def test_commit_adds_the_episode_to_the_show(cast_show, fonts, capsys):
     entry = bible["episodes"][-1]
     assert entry["code"] == "S01E01" and entry["stills"] == store.read_json(cast_show.state_path("S01E01"))["stills"]
     assert store.read_json(cast_show.cast_path) == store.read_json(ep / "cast.next.json")
-    sheet = store.read_json(cast_show.cast_path)
-    assert sheet.get("take_id") is not None or all("take_id" in m or "poses" in m for m in sheet["members"])
     snaps = cast_show.dir / "snapshots"
     assert (snaps / "bible.S01E01.pre.json").read_bytes() == before_bible
     assert (snaps / "cast.S01E01.pre.json").read_bytes() == before_cast
@@ -142,6 +140,24 @@ def test_commit_adds_the_episode_to_the_show(cast_show, fonts, capsys):
     assert app.status(cast_show)["episode"] == "S01E02" and app.status(cast_show)["stage"] == "not started"
     code, _, err = run(capsys, "commit", "lake-house")
     assert code == 2 and "CHATCOM_E_STATE" in err
+
+
+# Value: protects=a recast's take and take_id reach cast.json at commit (casting leftover 2); fails_when=the commit
+# rebuilds the sheet and drops the take fields; why_new=no commit test had a recast; seam=none; no_claim=none
+def test_a_recast_before_the_commit_carries_its_take_into_the_show(cast_show, fonts):
+    _encoded(cast_show)
+    with pytest.raises(ChatcomError) as e:
+        casting.recast(cast_show, ReplayPainter(), member="Mike", accepted=False, approve_calls=None,
+                       say=lambda m: None)
+    casting.recast(cast_show, ReplayPainter(), member="Mike", accepted=True, approve_calls=e.value.context["calls"],
+                   say=lambda m: None)
+    drawn = next(m for m in store.read_json(cast_show.episode_dir("S01E01") / "cast.next.json")["members"]
+                 if m["name"] == "Mike")
+    assert drawn["take"] == 1 and drawn["take_id"]
+    _encoded(cast_show)
+    app.commit(cast_show)
+    kept = next(m for m in store.read_json(cast_show.cast_path)["members"] if m["name"] == "Mike")
+    assert (kept["take"], kept["take_id"]) == (drawn["take"], drawn["take_id"])
 
 
 # Value: protects=a commit stopped after cast.json, or after bible.json, finishes on the next run with the first
@@ -289,3 +305,80 @@ def test_a_still_with_an_odd_suffix_never_reaches_the_page_as_text(cast_show, tm
     _, index, html = compose(cast_show, tmp_path, lambda b, s: b.update(episode="S01E02"),
                              previous={"synopsis": "s", "stills": [odd.relative_to(cast_show.dir).as_posix()]})
     assert "');}x{" not in html and "assets/stills/0.jpg" in html
+
+
+# ---- coverage audit (R3, pass 1) ---------------------------------------------------------------------
+# Value: protects=an ffmpeg failure on the encode is a coded render error that names the log and leaves no .part file;
+# fails_when=_run ignores the exit code, or the part file survives a failed encode; why_new=every encode test fakes
+# _run or succeeds; seam=none; no_claim=the 15-minute timeout branch
+def test_a_failed_encode_is_a_render_error_and_keeps_nothing(tmp_path):
+    bad = tmp_path / "master.mp4"
+    bad.write_bytes(b"not a video")
+    log = tmp_path / "encode.log"
+    with pytest.raises(ChatcomError) as e:
+        encoder.encode(bad, tmp_path / "ep", max_bytes=16_000_000, seconds=60, log=log)
+    assert e.value.code == "CHATCOM_E_RENDER" and e.value.recovery == "retry" and str(log) in e.value.fix
+    assert "ffmpeg exit" in e.value.what and log.read_text("utf-8").startswith("$ ")
+    assert not list((tmp_path / "ep").iterdir())
+
+
+# Value: protects=a cap too small for the length stops after the CRF try with no two-pass at a bitrate under 100 kb/s;
+# fails_when=the kbps floor goes and ffmpeg runs at zero or negative bitrate; why_new=the floor branch is untested;
+# seam=encoder._run (writes a file of a chosen size); no_claim=ffmpeg's real sizes
+def test_a_cap_too_small_for_the_length_stops_before_two_pass(tmp_path, monkeypatch):
+    calls = _sized(monkeypatch, [9_000_000])
+    with pytest.raises(ChatcomError) as e:
+        encoder.encode(tmp_path / "m.mp4", tmp_path / "ep", max_bytes=1_000_000, seconds=600, log=tmp_path / "l")
+    assert e.value.code == "CHATCOM_E_SIZE_CAP" and len(e.value.context["tries"]) == 1
+    assert len(calls) == 1 and not list((tmp_path / "ep").iterdir())
+
+
+# Value: protects=rewrite --episode N of a commit with no snapshots refuses and changes nothing; fails_when=the snapshot
+# check moves after a write and leaves a half-restored show; why_new=only the happy restore is tested; seam=none;
+# no_claim=snapshots from older chatcom versions
+def test_rewrite_of_a_committed_episode_without_snapshots_changes_nothing(cast_show, fonts, capsys):
+    _encoded(cast_show)
+    app.commit(cast_show)
+    (cast_show.dir / "snapshots" / "cast.S01E01.pre.json").unlink()
+    before = (cast_show.bible_path.read_bytes(), cast_show.cast_path.read_bytes(),
+              cast_show.state_path("S01E01").read_bytes())
+    code, _, err = run(capsys, "rewrite", "lake-house", "--episode", "1")
+    assert code == 2 and "no snapshot" in err
+    after = (cast_show.bible_path.read_bytes(), cast_show.cast_path.read_bytes(),
+             cast_show.state_path("S01E01").read_bytes())
+    assert after == before
+
+
+# Value: protects=render --episode N for an episode that is neither committed nor this week's refuses before any
+# write; fails_when=_episode_for falls through to another episode or renders this week's; why_new=only N=1 committed
+# is tested; seam=none; no_claim=the "no draft left" branch
+def test_render_of_an_episode_that_does_not_exist_refuses(cast_show, fonts, capsys):
+    before = cast_show.state_path("S01E01").read_bytes()
+    with pytest.raises(ChatcomError) as e:
+        app.render(cast_show, episode=7, runner=_never)
+    assert e.value.code == "CHATCOM_E_STATE" and e.value.context["episode"] == 7
+    assert cast_show.state_path("S01E01").read_bytes() == before
+    assert not (cast_show.episode_dir("S01E01") / "render").exists()
+
+
+# Value: protects=a commit stopped after bible.json is finished by the next ingest, which then starts the next
+# episode; fails_when=ingest's _finish_commit branch goes and S01E01 stays `encoded` forever; why_new=only `commit`
+# reruns are tested; seam=store.write_json (raises at the state); no_claim=a stop inside one atomic write
+def test_ingest_finishes_a_commit_that_stopped_before_its_state(cast_show, fonts, capsys, monkeypatch):
+    _encoded(cast_show)
+    real = store.write_json
+    target = cast_show.state_path("S01E01")
+
+    def stop(path, doc):
+        if Path(path) == target and doc.get("stage") == "committed":
+            raise KeyboardInterrupt
+        real(path, doc)
+    monkeypatch.setattr(store, "write_json", stop)
+    with pytest.raises(KeyboardInterrupt):
+        app.commit(cast_show)
+    monkeypatch.setattr(store, "write_json", real)
+    assert store.read_json(target)["stage"] == "encoded"
+    code, out, err = run(capsys, "ingest", "lake-house", "--export", str(_next_week(cast_show)), "--accept-data-flow")
+    assert code == 0, err
+    assert store.read_json(target)["stage"] == "committed"
+    assert store.read_json(cast_show.state_path("S01E02"))["stage"] == "ingested"
