@@ -136,7 +136,7 @@ What R2 shipped, and where it differs from the plan text above:
 - **Stills (D15):** `episodes/<code>/stills/scene_1.jpg` and `scene_3.jpg`, 0.5 s into each scene, taken from the
   master at encode and written into the log entry at commit. The composer only uses `.jpg`, `.jpeg`, `.png` or
   `.webp` as a still's name in the page.
-- **Commit (O12 answer B):** at `encoded`, `chatcom commit <show>`, or `chatcom ingest`/`episode` for the next
+- **Commit (O12 answer A):** at `encoded`, `chatcom commit <show>`, or `chatcom ingest`/`episode` for the next
   episode, which commits the waiting one first and says so. Order under the show lock: snapshots
   `bible.<code>.pre.json` and `cast.<code>.pre.json` (written once), `cast.json`, `bible.json` (the done marker),
   the state. A stop after `bible.json` is finished by the next commit or ingest.
