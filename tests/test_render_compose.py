@@ -545,7 +545,7 @@ def _hanging(tmp_path, honour_term: bool) -> tuple[Path, Path]:
     exe = tmp_path / ("hf-term" if honour_term else "hf-stubborn")
     trap = "trap 'kill $CHILD; exit 143' TERM" if honour_term else "trap '' TERM"
     exe.write_text(f'#!/bin/sh\n{trap}\nsleep 120 &\nCHILD=$!\necho "$$ $CHILD" > "{pids}"\n'
-                   'while :; do sleep 1; done\n')
+                   'wait\n')  # `wait` returns at once on a trapped signal; a foreground sleep would delay the trap
     exe.chmod(exe.stat().st_mode | stat.S_IEXEC)
     return exe, pids
 
