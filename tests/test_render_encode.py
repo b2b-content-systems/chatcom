@@ -462,3 +462,46 @@ def test_rewrite_after_a_commit_stopped_past_cast_json_puts_the_cast_back(cast_s
     app.rewrite(cast_show)
     assert cast_show.cast_path.read_bytes() == pre_cast
     assert "boathouse" not in {b["id"] for b in store.read_json(ep / "cast.next.json")["backgrounds"]}
+
+
+# ---- review notes fixed on request -------------------------------------------------------------------
+# Value: protects=after a stopped `rewrite --episode N`, ingest and status point at the rewrite instead of starting
+# the next episode on a half-restored show; fails_when=ingest goes on; why_new=review notes (3 readers); seam=store.
+# write_atomic (raises); no_claim=none
+def test_ingest_refuses_while_an_undo_of_a_commit_is_unfinished(cast_show, fonts, capsys, monkeypatch):
+    _encoded(cast_show)
+    app.commit(cast_show)
+    real = store.write_atomic
+
+    def stop(path, data):
+        if Path(path) == cast_show.bible_path:
+            raise KeyboardInterrupt
+        real(path, data)
+    monkeypatch.setattr(store, "write_atomic", stop)
+    with pytest.raises(KeyboardInterrupt):
+        app.rewrite(cast_show, episode=1)
+    monkeypatch.setattr(store, "write_atomic", real)
+    assert app.status(cast_show)["next"] == "chatcom rewrite lake-house --episode 1"
+    code, _, err = run(capsys, "ingest", "lake-house", "--export", str(_next_week(cast_show)), "--accept-data-flow")
+    assert code == 2 and "stopped halfway" in err and "chatcom rewrite lake-house --episode 1" in err
+    assert not cast_show.state_path("S01E02").exists()
+
+
+# Value: protects=an ingest that fails after its auto-commit says the episode was committed and how to undo it;
+# fails_when=the error keeps side effects `none`; why_new=review notes; seam=none; no_claim=other failure codes
+def test_a_failed_ingest_after_the_auto_commit_says_so(cast_show, fonts, capsys):
+    _encoded(cast_show)
+    code, out, err = run(capsys, "--json", "ingest", "lake-house", "--export", str(LAKE), "--accept-data-flow")
+    assert code == 2 and "S01E01 was committed first" in err and "chatcom rewrite lake-house --episode 1" in err
+    assert json.loads(err.splitlines()[-1])["side_effects"] == "partial"
+    assert store.read_json(cast_show.state_path("S01E01"))["stage"] == "committed"
+    assert app.rewrite(cast_show, episode=1)["stage"] == "ingested"   # and the fix it names works
+
+
+def test_replace_on_an_encoded_episode_is_refused_before_the_commit(cast_show, fonts, capsys):
+    _encoded(cast_show)
+    before = cast_show.bible_path.read_bytes()
+    code, _, err = run(capsys, "ingest", "lake-house", "--export", str(_next_week(cast_show)), "--accept-data-flow",
+                       "--replace")
+    assert code == 2 and "--replace" in err and cast_show.bible_path.read_bytes() == before
+    assert store.read_json(cast_show.state_path("S01E01"))["stage"] == "encoded"

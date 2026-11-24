@@ -24,6 +24,9 @@ Next Step 4, part 3: the MP4 for the group, and the commit.
 - `chatcom rewrite` drops the sets the draft added, so the next draft cannot reuse a set id with the old picture.
   It also writes the episode's new stage before it deletes the draft.
 - A relative `CHATCOM_HOME` now works for the render. The render's preflight checks that its Chrome is installed.
+- If starting the next episode fails after it committed the waiting one, the error now says so and names the
+  `chatcom rewrite <show> --episode N` that undoes it. `--replace` is refused on an encoded episode. If a
+  `rewrite --episode N` stopped halfway, `ingest` and `status` point at it instead of starting the next episode.
 
 ## 0.1.0.dev10 (unreleased)
 

@@ -408,8 +408,16 @@ def ingest(show: store.Show, export, *, accepted: bool, mode: str, since: dateti
         code = bible_ops.current_code(bible)
         sp = show.state_path(code)
         prior = store.read_json(sp) if sp.exists() else None
+        _refuse_unfinished_undo(show, bible)
+        committed_first = None
+        if prior and prior["stage"] == "encoded" and replace:
+            raise ChatcomError("CHATCOM_E_STATE", f"{code} is encoded; --replace restarts a screenshot import, and "
+                               "this episode's import is done",
+                               f"To change {code}, run `chatcom rewrite {show.slug}`. To start the next episode, run "
+                               "the same command without --replace.", context={"stage": "encoded"})
         if prior and prior["stage"] == "encoded":  # O12: last week's episode commits when this one starts
             done = _commit_locked(show, log)
+            committed_first = done["episode"]
             say(f"{done['episode']}: committed; starting the next episode")
             bible, sheet, setup = _load(show)
             code = bible_ops.current_code(bible)
@@ -423,74 +431,82 @@ def ingest(show: store.Show, export, *, accepted: bool, mode: str, since: dateti
                                f"Write the episode again with `chatcom rewrite {show.slug}` (it keeps the "
                                "messages, the transcript and the drawings).",
                                context={"stage": prior["stage"], "folder": str(show.episode_dir(code))})
-        if prior and prior["stage"] in state_ops.IMPORTING and not replace:
-            # Only the transcript this import wrote may continue it.
-            want = prior.get("transcript")
-            if not (want and all(Path(e).expanduser().resolve() == Path(want).resolve() for e in exports)):
-                raise ChatcomError("CHATCOM_E_IMPORT_IN_PROGRESS",
-                                   f"{code} has a screenshot import at stage '{prior['stage']}'",
-                                   f"Continue it with --export {want}, or pass --replace to start the import over."
-                                   if want else "Pass --replace to start the import over.",
-                                   context={"stage": prior["stage"], "transcript": want})
-        if images and mode == "session":
-            # skill mode: copy, then the session reads them (read-prep / read-submit)
-            from chatcom import reading
-            import shutil
-            dest = show.episode_dir(code) / "import"
-            fresh = dest.with_name("import.new")  # check and copy first; the old import goes only on success
-            shutil.rmtree(fresh, ignore_errors=True)
-            try:
-                copies = reading.copy_images(registry.expand(exports), fresh, (shots or {}).get("max_images") or 40)
-            except BaseException:
+        try:
+            if prior and prior["stage"] in state_ops.IMPORTING and not replace:
+                # Only the transcript this import wrote may continue it.
+                want = prior.get("transcript")
+                if not (want and all(Path(e).expanduser().resolve() == Path(want).resolve() for e in exports)):
+                    raise ChatcomError("CHATCOM_E_IMPORT_IN_PROGRESS",
+                                       f"{code} has a screenshot import at stage '{prior['stage']}'",
+                                       f"Continue it with --export {want}, or pass --replace to start the import over."
+                                       if want else "Pass --replace to start the import over.",
+                                       context={"stage": prior["stage"], "transcript": want})
+            if images and mode == "session":
+                # skill mode: copy, then the session reads them (read-prep / read-submit)
+                from chatcom import reading
+                import shutil
+                dest = show.episode_dir(code) / "import"
+                fresh = dest.with_name("import.new")  # check and copy first; the old import goes only on success
                 shutil.rmtree(fresh, ignore_errors=True)
-                raise
-            shutil.rmtree(dest, ignore_errors=True)
-            fresh.rename(dest)
-            st = state_ops.new(code, None, mode, store.now(), stage="copied", reader="session")
-            st["source"] = "screenshots"
-            st["reader"] = reading.reader_state(copies, shots or {})
+                try:
+                    copies = reading.copy_images(registry.expand(exports), fresh, (shots or {}).get("max_images") or 40)
+                except BaseException:
+                    shutil.rmtree(fresh, ignore_errors=True)
+                    raise
+                shutil.rmtree(dest, ignore_errors=True)
+                fresh.rename(dest)
+                st = state_ops.new(code, None, mode, store.now(), stage="copied", reader="session")
+                st["source"] = "screenshots"
+                st["reader"] = reading.reader_state(copies, shots or {})
+                store.write_json(sp, st)
+                log.write(f"{code}: {len(copies)} screenshot copies for the session to read")
+                return dest, None, st
+            shot_ctx = (shot_context(shots, mode, bible["show"]["operator_sender"], show.episode_dir(code) / "import",
+                                     show.dir / "cache" / "reads") if images else None)
+            res, _ = _parse_export(exports, tz, setup.get("aliases", {}), max_unparsed, log, show, key=key,
+                                   source=source, thread=thread, shots=shot_ctx)
+            if review and res.adapter == "screenshots" and res.artifacts.get("transcript"):
+                st = state_ops.new(code, None, mode, store.now(), stage="read", reader=shot_ctx["reader"].mode)
+                st["source"] = "screenshots"
+                st["transcript"] = res.artifacts["transcript"]
+                if res.artifacts.get("reader_calls"):
+                    st["reader_calls"] = res.artifacts["reader_calls"]  # paid reads count even when review stops here
+                store.write_json(sp, st)
+                log.write(f"{code}: screenshots read, stopped for review at {st['transcript']}")
+                return Path(st["transcript"]), None, st
+            check_exclusions_match(show, setup, res)
+            if res.adapter == "screenshots":
+                check_screenshot_exclusions(setup, res)
+            win = window_ops.select(res.messages, bible_ops.last_cursor(bible), since=_aware(since, tz),
+                                    until=_aware(until, tz), max_days=max_days, bottle=bottle,
+                                    exclude=setup.get("exclude", []), aliases=setup.get("aliases"),
+                                    key=key, adapter=res.adapter)
+            # A re-ingest before the draft is accepted starts the episode over, with
+            # fresh writer attempts: this is the "rerun the skill" recovery.
+            st = state_ops.new(code, win.log_entry(), mode, store.now(),
+                               reader=shot_ctx["reader"].mode if shot_ctx else (prior or {}).get("accepted_flow", {}).get("reader"))
+            st["bottle_requested"] = bottle
+            st["unparsed_rate"] = round(res.unparsed_rate, 4)
+            st["source"] = res.adapter
+            st["resume"] = {"method": win.method, "warning": win.warning}
+            continuing = bool(prior and prior["stage"] == "read" and prior.get("transcript") and
+                              all(Path(e).expanduser().resolve() == Path(prior["transcript"]).resolve() for e in exports))
+            calls = res.artifacts.get("reader_calls") or (prior.get("reader_calls") if continuing else 0)
+            if calls:  # billed to the operator's own Gemini key; only a continued --review import keeps its count
+                st["reader_calls"] = calls
+            if res.artifacts.get("reader_answered"):
+                st["reader_answered"] = res.artifacts["reader_answered"]
+            ep = show.episode_dir(code)
+            store.write_jsonl(ep / "messages.jsonl", win.messages)
             store.write_json(sp, st)
-            log.write(f"{code}: {len(copies)} screenshot copies for the session to read")
-            return dest, None, st
-        shot_ctx = (shot_context(shots, mode, bible["show"]["operator_sender"], show.episode_dir(code) / "import",
-                                 show.dir / "cache" / "reads") if images else None)
-        res, _ = _parse_export(exports, tz, setup.get("aliases", {}), max_unparsed, log, show, key=key,
-                               source=source, thread=thread, shots=shot_ctx)
-        if review and res.adapter == "screenshots" and res.artifacts.get("transcript"):
-            st = state_ops.new(code, None, mode, store.now(), stage="read", reader=shot_ctx["reader"].mode)
-            st["source"] = "screenshots"
-            st["transcript"] = res.artifacts["transcript"]
-            if res.artifacts.get("reader_calls"):
-                st["reader_calls"] = res.artifacts["reader_calls"]  # paid reads count even when review stops here
-            store.write_json(sp, st)
-            log.write(f"{code}: screenshots read, stopped for review at {st['transcript']}")
-            return Path(st["transcript"]), None, st
-        check_exclusions_match(show, setup, res)
-        if res.adapter == "screenshots":
-            check_screenshot_exclusions(setup, res)
-        win = window_ops.select(res.messages, bible_ops.last_cursor(bible), since=_aware(since, tz),
-                                until=_aware(until, tz), max_days=max_days, bottle=bottle,
-                                exclude=setup.get("exclude", []), aliases=setup.get("aliases"),
-                                key=key, adapter=res.adapter)
-        # A re-ingest before the draft is accepted starts the episode over, with
-        # fresh writer attempts: this is the "rerun the skill" recovery.
-        st = state_ops.new(code, win.log_entry(), mode, store.now(),
-                           reader=shot_ctx["reader"].mode if shot_ctx else (prior or {}).get("accepted_flow", {}).get("reader"))
-        st["bottle_requested"] = bottle
-        st["unparsed_rate"] = round(res.unparsed_rate, 4)
-        st["source"] = res.adapter
-        st["resume"] = {"method": win.method, "warning": win.warning}
-        continuing = bool(prior and prior["stage"] == "read" and prior.get("transcript") and
-                          all(Path(e).expanduser().resolve() == Path(prior["transcript"]).resolve() for e in exports))
-        calls = res.artifacts.get("reader_calls") or (prior.get("reader_calls") if continuing else 0)
-        if calls:  # billed to the operator's own Gemini key; only a continued --review import keeps its count
-            st["reader_calls"] = calls
-        if res.artifacts.get("reader_answered"):
-            st["reader_answered"] = res.artifacts["reader_answered"]
-        ep = show.episode_dir(code)
-        store.write_jsonl(ep / "messages.jsonl", win.messages)
-        store.write_json(sp, st)
-        log.write(f"{code}: window {win.log_entry()} excluded {win.excluded} resume {win.method}")
+            log.write(f"{code}: window {win.log_entry()} excluded {win.excluded} resume {win.method}")
+        except ChatcomError as e:
+            if committed_first:  # the error must not read as "nothing changed"
+                e.side_effects = "partial"
+                e.fix += (f" {committed_first} was committed first and joined the show; "
+                          f"`chatcom rewrite {show.slug} --episode {_number(committed_first)}` undoes that until "
+                          "the next episode starts.")
+            raise
     return ep / "messages.jsonl", win, st
 
 
@@ -633,7 +649,8 @@ def status(show: store.Show) -> dict:
             "attempts": st["attempts"] if st else 0, "prep_cycles": st.get("prep_cycles", 0) if st else 0,
             "writer_mode": st.get("writer_mode") if st else None, "source": st.get("source") if st else None,
             "resume": st.get("resume") if st else None, "lock": show.lock_holder(),
-            "next": state_ops.next_command(st, show.slug)}
+            "next": (_undo_command(show, undo) if (undo := _unfinished_undo(show, bible))
+                     else state_ops.next_command(st, show.slug))}
 
 
 def _number(code: str) -> int:
@@ -843,6 +860,31 @@ def commit(show: store.Show) -> dict:
     with show.lock():
         res = _commit_locked(show, log)
     return res
+
+
+def _unfinished_undo(show: store.Show, bible: dict) -> str | None:
+    """The code of a committed episode whose `rewrite --episode N` stopped
+    halfway: bible.json still lists it, but its state left `committed`."""
+    last = (bible.get("episodes") or [None])[-1]
+    if not last:
+        return None
+    sp = show.state_path(last["code"])
+    if sp.exists() and store.read_json(sp)["stage"] not in ("committed", "encoded"):
+        return last["code"]
+    return None
+
+
+def _undo_command(show: store.Show, code: str) -> str:
+    return f"chatcom rewrite {show.slug} --episode {_number(code)}"
+
+
+def _refuse_unfinished_undo(show: store.Show, bible: dict) -> None:
+    code = _unfinished_undo(show, bible)
+    if code:
+        raise ChatcomError("CHATCOM_E_STATE", f"writing {code} again stopped halfway: the show still lists it, but "
+                           "its drawings and log were partly put back",
+                           f"Run `{_undo_command(show, code)}` again to finish it, then start the next episode.",
+                           recovery="ask", context={"episode": code})
 
 
 def _finish_commit(show: store.Show, bible: dict) -> str | None:
