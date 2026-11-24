@@ -16,7 +16,6 @@ import hashlib
 import json
 import re
 import socket
-import shutil
 import subprocess
 import tempfile
 import threading
@@ -26,6 +25,7 @@ import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 
+from chatcom.adapters import tools
 from chatcom.adapters.writers import llm_fallback as lf
 from chatcom.core.errors import ChatcomError, redact
 
@@ -169,9 +169,7 @@ class ReplayPainter:
         green = "On a flat, even, pure chroma-key green" in prompt
         bg = "0x00B140" if green else colour
         figure = f",drawbox=x={w // 3}:y={h // 5}:w={w // 3}:h={h * 3 // 5}:color={colour}:t=fill" if green else ""
-        exe = shutil.which("ffmpeg")
-        if not exe:
-            raise ChatcomError("CHATCOM_E_PREFLIGHT", "ffmpeg is not installed", "Install ffmpeg.")
+        exe = tools.ffmpeg("the replay painter draws its placeholders with it")
         with tempfile.TemporaryDirectory() as td:
             out = Path(td) / "p.png"
             subprocess.run([exe, "-nostdin", "-v", "error", "-f", "lavfi", "-i", f"color=c={bg}:s={w}x{h}",

@@ -8,8 +8,9 @@ starring the people in it, in the style of a show you pick. Next week it writes 
 the running jokes.
 
 **Current status: v0.1 is in development.** Today CHATCOM reads the chat, writes the episode's script
-(`beats.json`) and the show's memory, and casts the show (each member in 6 poses, and the sets). The video
-render is next. The sample episodes on the site
+(`beats.json`) and the show's memory, casts the show (each member in 6 poses, and the sets), and renders the
+60-second master video on your computer. Sound, the size-capped file for the group chat and the commit come
+next. The sample episodes on the site
 were made with the same pipeline.
 
 <p align="center"><img src=".github/assets/demo.gif" alt="One group chat becomes an episode in several styles" width="640"></p>
@@ -44,7 +45,15 @@ it stands:
 ```bash
 pipx install git+https://github.com/b2b-content-systems/chatcom
 chatcom doctor
+chatcom doctor --install   # once, for the render: HyperFrames, its Chrome, emoji and CJK fonts (about 400 MB)
 ```
+
+The render needs Node.js 22 or newer and ffmpeg. It runs on your computer with no keys and needs no network:
+the video page allows no outside request, HyperFrames runs with its telemetry off, and CI renders an episode with
+the network cut off.
+
+The video's fonts cover Latin, Greek and Cyrillic text, emoji, Chinese, Japanese and Korean. Arabic, Hebrew,
+Devanagari and Thai have no font yet, so a chat in those scripts shows boxes in its bubbles.
 
 ## Two ways to run it
 
@@ -110,12 +119,14 @@ how many it made (`calls_billed`). The limits:
 | `chatcom read-prep`, `read-submit` | The skill's screenshot-reading steps |
 | `chatcom cast <show>` | Draw the cast (6 poses each) and the sets for this episode |
 | `chatcom recast <show> [--member NAME]` | Draw one member again (6 calls; `--photo PATH` or `--no-photo`), or the whole show |
+| `chatcom render <show>` | Turn the cast episode into the 60-second master video (no keys, no network) |
+| `chatcom rewrite <show>` | Send this week's episode back to the writer; keeps the messages, transcript and drawings |
 | `chatcom status <show>` | Where the episode stands, and the next command |
 | `chatcom migrate <show>` | Upgrade a show made by an older version (backs it up first) |
-| `chatcom shows`, `chatcom doctor` | List shows; check this computer |
+| `chatcom shows`, `chatcom doctor [--install]` | List shows; check this computer (`--install`: the render runtime) |
 
 An episode moves through `copied` → `read` → `ingested` → `drafted` → `cast` → `rendered` → `encoded` →
-`committed`. This release stops at `cast`. The show's memory changes only at `committed`.
+`committed`. This release stops at `rendered`. The show's memory changes only at `committed`.
 
 ## Remove a show
 

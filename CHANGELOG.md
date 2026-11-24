@@ -1,5 +1,36 @@
 # Changelog
 
+## 0.1.0.dev10 (unreleased)
+
+Next Step 4, part 2: the render.
+
+### Added
+- `chatcom render <show>`: turns the cast episode into the 60-second vertical master video (1080x1920, 30 fps) on
+  your computer, with no keys and no network. Every segment is there: "Previously on" (from episode 2), the cold
+  open, the title card, the credits (each member's drawing, 2 to a card), the three scenes with speech bubbles and
+  stickers, the TV Guide card and the renewal card. A bubble sits on its speaker's side like a chat, and the
+  speaker's drawing switches to the pose the script gave the line. Sound arrives in a later release.
+- `chatcom doctor --install`: installs the render runtime once into `CHATCOM_HOME/runtime/0.9.86/`: HyperFrames
+  0.9.86 (pinned exactly, with its lockfile), its Chrome, and the emoji, Chinese/Japanese and Korean fonts, each
+  checked against its sha256. About 400 MB.
+- `chatcom rewrite <show>`: sends this week's episode back to the writer. The draft and the render go; the
+  messages, the transcript, the drawings and the record of paid calls stay.
+- Error `CHATCOM_E_RENDER` (exit 5): the render failed or the video is not 60 s +- 0.1; the message names the log.
+
+### Changed
+- Render safety: chat text enters the video page only as escaped text; the page allows no outside request (a CSP
+  rule) and links nothing outside its own folder; a drawing or still whose path leaves the show folder is refused.
+- An episode drafted before the bubble limit (0.1.0.dev8 or older) stops at `render`, before anything is written,
+  and the message names `chatcom rewrite <show>` and the writer command to run next.
+- The render and the runtime install run with no key or token variable from your shell (names ending in API_KEY,
+  TOKEN, SECRET, PASSWORD or CREDENTIALS), and npm reads no `~/.npmrc` of yours: the lockfile pins every package.
+  If you need a proxy for the install, set `HTTPS_PROXY`.
+- A render that hangs past 30 minutes, or that you stop with Ctrl-C, is stopped with the Chrome it started. A
+  failed re-render puts the episode back at `cast` and says so, because the earlier video was removed.
+- One lookup finds ffmpeg, ffprobe and node for every command, with one install hint each.
+- The licence check also reads `assets/manifest.json`: every shipped font must be listed, unchanged, under OFL or
+  CC0, with its licence text.
+
 ## 0.1.0.dev9 (unreleased)
 
 Next Step 4, part 1: the render timeline.

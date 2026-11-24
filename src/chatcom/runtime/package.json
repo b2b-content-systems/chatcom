@@ -1,0 +1,9 @@
+{
+  "name": "chatcom-render-runtime",
+  "private": true,
+  "description": "The render runtime chatcom installs into CHATCOM_HOME/runtime/<version>/. Pinned exactly; the lockfile ships with it.",
+  "license": "MIT",
+  "dependencies": {
+    "hyperframes": "0.9.86"
+  }
+}

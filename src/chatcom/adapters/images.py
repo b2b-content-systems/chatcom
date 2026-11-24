@@ -22,6 +22,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
+from chatcom.adapters import tools
 from chatcom.core.errors import ChatcomError
 
 MAX_IMAGES = 40
@@ -231,11 +232,7 @@ def manifest(paths: list[Path], max_images: int = MAX_IMAGES) -> list[Entry]:
 # ---- copies -------------------------------------------------------------------------------
 
 def _ffmpeg() -> str:
-    exe = shutil.which("ffmpeg")
-    if not exe:
-        raise ChatcomError("CHATCOM_E_PREFLIGHT", "ffmpeg is not installed; chatcom re-encodes every screenshot with it",
-                           "Install ffmpeg (macOS: `brew install ffmpeg`; Debian/Ubuntu: `apt install ffmpeg`).")
-    return exe
+    return tools.ffmpeg("chatcom re-encodes every screenshot with it")
 
 
 def _run(cmd: list[str], name: str) -> None:

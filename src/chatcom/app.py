@@ -411,8 +411,8 @@ def ingest(show: store.Show, export, *, accepted: bool, mode: str, since: dateti
         if prior and prior["stage"] not in ("ingested", *state_ops.IMPORTING):
             # checked before anything is read: a drafted episode is never reset
             raise ChatcomError("CHATCOM_E_STATE", f"{code} is already {prior['stage']}",
-                               f"Restart the episode with `chatcom rewrite {show.slug} --episode {code}` "
-                               "(arrives with the render step), or delete its folder.",
+                               f"Write the episode again with `chatcom rewrite {show.slug}` (it keeps the "
+                               "messages, the transcript and the drawings).",
                                context={"stage": prior["stage"], "folder": str(show.episode_dir(code))})
         if prior and prior["stage"] in state_ops.IMPORTING and not replace:
             # Only the transcript this import wrote may continue it.
@@ -627,6 +627,79 @@ def status(show: store.Show) -> dict:
             "next": state_ops.next_command(st, show.slug)}
 
 
+def rewrite(show: store.Show, episode: int | None = None) -> dict:
+    """Send this week's episode back to the writer: drafted, cast or rendered
+    -> ingested. The draft and the render go; the messages, the transcript, the
+    drawings (cast.next.json and the image cache) and the paid-call counts stay."""
+    import shutil
+    log = store.RunLog(show, "rewrite")
+    with show.lock():
+        bible, _, _ = _load(show)
+        code, st = _current_state(show, bible)
+        if episode is not None and int(code.split("E", 1)[1]) != episode:
+            raise ChatcomError("CHATCOM_E_STATE", f"episode {episode} is not this week's episode ({code})",
+                               "Only this week's episode can be written again for now; committed episodes "
+                               "arrive with the commit step.", context={"episode": code})
+        st = state_ops.reopen_draft(st, store.now())
+        ep = show.episode_dir(code)
+        for name in ("beats.json", "bible.next.json"):
+            (ep / name).unlink(missing_ok=True)
+        if (ep / "render").is_dir():
+            shutil.rmtree(ep / "render")
+        store.write_json(show.state_path(code), st)
+        log.write(f"{code}: back to ingested")
+    return {"episode": code, "stage": st["stage"], "next_command": state_ops.next_command(st, show.slug)}
+
+
+def render(show: store.Show, *, runner=None, say=lambda s: None) -> dict:
+    """The render stage: cast (or rendered, to render again) -> rendered.
+    Writes episodes/<code>/render/ (the HyperFrames project) and its master.mp4."""
+    from chatcom.adapters import composer, hyperframes, runtime
+    from chatcom.core import render as render_ops
+    log = store.RunLog(show, "render")
+    with show.lock():
+        bible, _, _ = _load(show)
+        code, st = _current_state(show, bible)
+        state_ops.require(st, "cast", "rendered")
+        binary = runtime.require() if runner is None else None   # preflight before any write
+        ep = show.episode_dir(code)
+        beats = store.read_json(ep / "beats.json")
+        sheet = store.read_json(ep / "cast.next.json")
+        nxt = store.read_json(ep / "bible.next.json")
+        number = int(code.split("E", 1)[1])
+        problems = render_ops.fit_problems(beats, number)
+        if problems:  # a draft from before the bubble limit (chatcom 0.1.0.dev8 or older)
+            raise ChatcomError("CHATCOM_E_BEATS_INVALID",
+                               f"{code}: {problems[0]['path']} {problems[0]['message']}",
+                               f"Write this episode again with `chatcom rewrite {show.slug}`, then run "
+                               f"`{state_ops.next_command({**st, 'stage': 'ingested'}, show.slug)}`. The "
+                               "messages, the transcript and the drawings are kept.",
+                               recovery="ask", context={"problems": problems, "episode": code})
+        tl = render_ops.timeline(beats, sheet, render_ops.previous_entry(bible),
+                                 show_title=nxt["show"]["title"] or beats.get("show_title") or show.slug)
+        build = ep / "render"
+        master = build / "master.mp4"
+        run = runner or (lambda p, m, **kw: hyperframes.render(p, m, binary=binary, **kw))
+        try:
+            index = composer.write_project(tl, sheet, show.dir, build, big_fonts=runtime.fonts_dir())
+            say(f"{code}: rendering {tl.total:.0f} s with HyperFrames {runtime.VERSION}")
+            seconds = run(index.parent, master, expected=tl.total, log=build / "render.log")
+        except BaseException as e:  # a coded error, an OS error or Ctrl-C
+            if st["stage"] == "rendered":  # the old master is gone: the episode is back to `cast`
+                store.write_json(show.state_path(code), {**st, "stage": "cast", "updated": store.now()})
+                if isinstance(e, ChatcomError):
+                    e.side_effects = "partial"
+                    e.fix += f" The earlier render was removed; {code} is back at stage 'cast'."
+            raise
+        if st["stage"] == "cast":
+            st = state_ops.advance(st, "rendered", store.now())
+        st = {**st, "updated": store.now()}
+        store.write_json(show.state_path(code), st)
+        log.write(f"{code}: rendered {seconds:.2f} s")
+    return {"episode": code, "stage": st["stage"], "master": str(master), "seconds": round(seconds, 2),
+            "project": str(index), "next_command": state_ops.next_command(st, show.slug)}
+
+
 def run_writer(show: store.Show, writer: Writer, *, token_budget: int = ranking.DEFAULT_TOKEN_BUDGET,
                say=lambda s: print(s, file=sys.stderr)) -> dict:
     """CLI and replay modes: prompt, validate, re-prompt with the errors, at
@@ -728,9 +801,15 @@ def doctor() -> list[tuple[str, bool, str]]:
     gem = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
     rows.append(("GEMINI_API_KEY (screenshots in CLI mode, casting, writer fallback)", bool(gem),
                  "set" if gem else "not set; needed for screenshots in CLI mode and from casting on"))
-    for tool, why in (("node", "render (Next Step 4)"), ("ffmpeg", "encode (Next Step 4)")):
+    for tool, why in (("node", "render"), ("ffmpeg", "casting, screenshots and encode"),
+                      ("ffprobe", "render length check")):
         path = shutil.which(tool)
-        rows.append((f"{tool} for {why}", bool(path), path or "not found; not needed yet"))
+        rows.append((f"{tool} for {why}", bool(path), path or "not found; needed from casting on"))
+    from chatcom.adapters import runtime
+    marker = runtime.root() / "installed.json"
+    rows.append((f"render runtime (HyperFrames {runtime.VERSION}, Chrome, emoji and CJK fonts)", marker.is_file(),
+                 str(runtime.root()) if marker.is_file()
+                 else f"not installed; needed from render on: `{runtime.INSTALL_COMMAND}`"))
     return rows
 
 

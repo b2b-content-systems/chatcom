@@ -1,7 +1,7 @@
 <!-- /autoplan restore point: "/Users/bryanbartlett/github-profile/chatcom/.gstack/tmp/autoplan/main-autoplan-restore-20261123-110141.md" -->
 # Render: from a cast episode to a 60-second video (Next Step 4)
 
-Status: plan, under /autoplan review (2026-11-23). Source of the spec: PLAN.md (Render, v0.1 additions, developer
+Status: R1 (timeline) and R2 (composition, runtime, `chatcom render`) built; R3-R5 planned (2026-11-23). Source of the spec: PLAN.md (Render, v0.1 additions, developer
 surface, render safety, segment budget). Branch base: main at 4d9b6a2 (casting parts 1 and 2 merged).
 
 ## Implementation plan
@@ -91,6 +91,39 @@ stills for sharing; the skill's render steps beyond one "render" step.
   Render itself makes no paid model calls; casting and the writer do.
 - Check WhatsApp's current video size limit before v0.1 and set the default cap from it.
 - Casting the demo show with Gemini costs real image calls (about 35); Bryan approves that spend.
+
+## R2 as built (2026-11-23)
+
+What R2 shipped, and where it differs from the plan text above:
+
+- **One standalone page, no sub-compositions.** `adapters/composer.py` writes `render/index.html` with each segment
+  as a timed clip and all motion through the Web Animations API (`render_templates/motion.js`), driven by data
+  attributes holding absolute times. Sub-compositions would be fetched at render time; one page keeps the CSP
+  simple and the chat text in one escaped document. HyperFrames lint warns `nested_structure_needs_subcomposition`
+  and `timeline_track_too_dense`; they are advice for Studio editing, not render errors. The root carries
+  `data-no-timeline` (no GSAP timeline; without it HyperFrames waits 45 s for one).
+- **Pictures are CSS backgrounds, not `<img>`.** HyperFrames' media scanner treats every `<img>` as a clip and
+  warns on repeats; poses, sets and stills are `background-image` on sized boxes.
+- **Assets are hard links (copies across disks)** inside `render/assets/`, never symlinks: the build folder holds
+  everything the page reads.
+- **Bubbles:** one on screen at a time (the timeline never overlaps them), as wide as their text, on the
+  speaker's side with the tail on that side; a sticker sits on the bubble's top edge. Dialogue type is 52 px
+  (17 px on a 360-px phone).
+- **Fonts:** six small OFL Latin subsets ship in `assets/fonts/` with `assets/manifest.json`. The runtime downloads
+  Noto Color Emoji, Noto Sans SC (Chinese and Japanese kana) and **Noto Sans KR** (added: SC has no Hangul) from a
+  pinned google/fonts commit, each checked by sha256.
+- **Runtime:** `chatcom doctor --install` (R5 keeps the reporting). Chrome lives in the runtime folder through
+  `HYPERFRAMES_CACHE_DIR`. About 330 MB installed. Some of HyperFrames' own npm dependencies are LGPL-3.0 (image
+  libraries); they install on the user's computer and are not shipped in the chatcom package.
+- **The way back for an old draft is `chatcom rewrite <show>`** (the PLAN.md command name), for this week's episode:
+  drafted, cast or rendered -> ingested; `--episode N` for a committed episode arrives with the commit (R3).
+- **`chatcom render --episode N` (O5) moves to R3**, with the commit: until an episode commits there is only one
+  renderable episode, and re-rendering it is a plain `chatcom render <show>`.
+- **O14 (render time):** 60 s rendered in 30-35 s on an M-series Mac (8 cores, hardware GPU). The CI job prints its
+  time with `--durations`.
+- **O7 proof:** the probe test renders a page with a real `<img src="http://127.0.0.1:PORT/...">` twice: with the
+  CSP the listener sees 0 requests; without it, it sees some. So the test can fail. The CI job renders inside a
+  network namespace with only loopback, after checking it cannot reach github.com.
 
 ## Review record
 
@@ -663,8 +696,15 @@ Spike it in R2 and bring the result back; nothing changes until then.
 D) Defer this
 Leave the plan as is for now and record the proposal in TODOS.md.
 
-State: pending (investigate)
-Actual answer: C) Investigate first (D15, 2026-11-23)
+State: approved
+Actual answer: A) 0.5 s in, kept (D15 brought back after the R2 evidence, answered 2026-11-23; first answer C, investigate)
+Accepted scope: R3's commit takes each still 0.5 s into scenes 1 and 3 of the master and saves it under
+`episodes/<code>/stills/`, recording the paths in the log entry; an episode whose previous entry has no stills shows
+the synopsis card only (R2's composer already does). PLAN.md's "first frame" rule is updated.
+Evidence (R2, 2026-11-23): with the R2 templates the first frame of a scene is not black. Scenes do not fade in;
+the set and the cast (in their resting pose) are on screen from frame 1, with no words yet. At 0.5 s the first
+line is on screen (lead-in 0.3 s + pop 0.24 s) and its speaker is in the line's pose. Stills are written at commit
+(R3), so nothing in R2 depends on the answer.
 Accepted scope: investigation only: in R2, look at the real first frames of scenes 1 and 3 in a rendered fixture and bring the result back as a new question. Until then PLAN.md's rule (first frame of scenes 1 and 3) stays unchanged and the remedy stays pending. No implementation approved.
 History: none
 
@@ -788,7 +828,7 @@ Codex; checkbox as you ship.
 
 ### Unresolved decisions that may bite you later
 - O12 (D13): when the episode commits — investigate before R3 builds the commit step.
-- O15 (D15): which frame the stills use — investigate in R2.
+- O15 (D15): answered after the R2 evidence: stills 0.5 s into scenes 1 and 3, kept under `episodes/<code>/stills/` (R3).
 
 ### Completion summary
 - Step 0: Scope Challenge — scope accepted as-is (5-PR arrangement, same scope)
