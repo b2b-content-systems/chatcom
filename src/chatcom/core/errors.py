@@ -56,6 +56,7 @@ CODES: dict[str, int] = {
     "CHATCOM_E_WRITER_BAD_REQUEST": EXIT_PROVIDER,
     "CHATCOM_E_PREFLIGHT": EXIT_PREFLIGHT,
     "CHATCOM_E_RENDER": EXIT_RENDER,
+    "CHATCOM_E_SIZE_CAP": EXIT_RENDER,
 }
 
 RECOVERY = ("retry", "fix and retry", "ask")

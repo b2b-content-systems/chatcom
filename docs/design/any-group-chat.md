@@ -265,6 +265,7 @@ on stdout and a notice as `{notice_text, data_flow, next_command}` on stdout.
 | `CHATCOM_E_READER_UNAVAILABLE` | 4 | 6 |
 | `CHATCOM_E_PAINTER_UNAVAILABLE` | 4 | 8 |
 | `CHATCOM_E_RENDER` | 5 | shipped |
+| `CHATCOM_E_SIZE_CAP` | 5 | shipped |
 <!-- /check_spec:codes -->
 
 `CHATCOM_W_WHOLE_IMPORT` is a warning, not an error: the run continues.

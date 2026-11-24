@@ -294,18 +294,21 @@ def test_the_runner_checks_the_length_and_the_exit_and_turns_telemetry_off(tmp_p
 # seam=HyperFrames (fake runner); no_claim=the real render (end-to-end below)
 
 def fake_runner(project, master, *, expected, log):
-    master.write_bytes(b"mp4")
+    """A real, tiny video of the expected length: the encode after the render reads it."""
+    subprocess.run(["ffmpeg", "-nostdin", "-v", "error", "-y", "-f", "lavfi", "-i",
+                    f"color=c=0x336699:s=108x192:r=5:d={expected}", "-c:v", "libx264", "-pix_fmt", "yuv420p",
+                    "-f", "mp4", str(master)], check=True)
     return expected
 
 
 @needs_ffmpeg
-def test_render_moves_a_cast_episode_to_rendered_and_can_run_again(cast_show, monkeypatch, tmp_path):
+def test_render_moves_a_cast_episode_to_encoded_and_can_run_again(cast_show, monkeypatch, tmp_path):
     monkeypatch.setattr(runtime, "fonts_dir", lambda version=runtime.VERSION: big_fonts(tmp_path))
     res = app.render(cast_show, runner=fake_runner)
-    assert res["stage"] == "rendered" and Path(res["master"]).is_file() and res["seconds"] == 60.0
-    assert app.status(cast_show)["next"].startswith("encode arrives")
+    assert res["stage"] == "encoded" and Path(res["master"]).is_file() and res["seconds"] == 60.0
+    assert app.status(cast_show)["next"] == "chatcom commit lake-house"
     again = app.render(cast_show, runner=fake_runner)
-    assert again["stage"] == "rendered"
+    assert again["stage"] == "encoded" and not again["encode_only"]
 
 
 @needs_ffmpeg
@@ -336,7 +339,7 @@ def test_rewrite_sends_the_episode_back_and_keeps_the_paid_work(cast_show, capsy
     ep = cast_show.episode_dir("S01E01")
     before = store.read_json(cast_show.state_path("S01E01"))
     code, out, _ = run(capsys, "--json", "rewrite", "lake-house", "--episode", "2")
-    assert code == 2  # not this week's episode
+    assert code == 2  # not this week's episode, and nothing is committed
     code, out, _ = run(capsys, "--json", "rewrite", "lake-house")
     res = json.loads(out)
     assert code == 0 and res["stage"] == "ingested" and "--writer replay" in res["next_command"]
@@ -363,9 +366,13 @@ def real_runtime(monkeypatch):
 # why_new=no render existed; seam=none; no_claim=visual quality (the snapshot is for eyes)
 @needs_runtime
 @needs_ffmpeg
-def test_a_cast_episode_renders_to_a_sixty_second_master(cast_show, real_runtime, tmp_path):
+def test_a_cast_episode_renders_and_encodes_to_a_sixty_second_mp4(cast_show, real_runtime, tmp_path):
     res = app.render(cast_show)
     assert hyperframes.duration(Path(res["master"])) == pytest.approx(60.0, abs=hyperframes.TOLERANCE)
+    # R3: the real encode of the real master fits the default cap and keeps the length
+    assert res["stage"] == "encoded" and 0 < Path(res["mp4"]).stat().st_size <= res["max_bytes"]
+    assert hyperframes.duration(Path(res["mp4"])) == pytest.approx(60.0, abs=hyperframes.TOLERANCE)
+    assert all(Path(p).stat().st_size > 1000 for p in res["stills"])
     out = Path(os.environ.get("CHATCOM_RENDER_SNAPSHOT_DIR") or tmp_path)
     out.mkdir(parents=True, exist_ok=True)
     tl = rt.timeline(store.read_json(cast_show.episode_dir("S01E01") / "beats.json"),
@@ -515,7 +522,7 @@ def test_a_failed_rerender_goes_back_to_cast_and_says_so(cast_show, monkeypatch,
     assert st["stage"] == "cast" and not (cast_show.episode_dir("S01E01") / "render" / "master.mp4").exists()
     assert e.value.side_effects == "partial" and "back at stage 'cast'" in e.value.fix
     assert app.status(cast_show)["next"] == "chatcom render lake-house"
-    assert app.render(cast_show, runner=fake_runner)["stage"] == "rendered"  # and it renders again
+    assert app.render(cast_show, runner=fake_runner)["stage"] == "encoded"  # and it renders again
 
     def interrupted(project, master, *, expected, log):  # Ctrl-C during a re-render (review pass 2)
         raise KeyboardInterrupt

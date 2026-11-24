@@ -171,6 +171,9 @@ def _scene(a: Assets, show: Path, sheet, members, seg: rt.Segment, colour) -> st
     return "".join(parts)
 
 
+STILL_SUFFIXES = (".jpg", ".jpeg", ".png", ".webp")   # the name goes into a CSS url(): never the bible's own text
+
+
 def _previously(a: Assets, show: Path, seg: rt.Segment, show_title: str) -> str:
     end = seg.start + seg.length
     parts = ['<div class="brand"></div>']
@@ -178,7 +181,8 @@ def _previously(a: Assets, show: Path, seg: rt.Segment, show_title: str) -> str:
     for k, rel in enumerate(stills):
         lo = seg.start + seg.length * k / len(stills)
         hi = seg.start + seg.length * (k + 1) / len(stills)
-        src = a.add(show / rel, f"stills/{k}{Path(rel).suffix.lower() or '.jpg'}", inside=show,
+        suffix = Path(rel).suffix.lower()
+        src = a.add(show / rel, f"stills/{k}{suffix if suffix in STILL_SUFFIXES else '.jpg'}", inside=show,
                     what=f"'Previously on' still {rel}",
                     fix="The show's bible.json lists a still outside the show folder; restore bible.json from "
                         "the show's snapshots folder, then render again.")
