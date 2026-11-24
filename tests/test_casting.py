@@ -810,3 +810,39 @@ def test_every_first_pose_asks_for_an_everyday_american_adult():
     hints = " ".join(rules.look_hint(i) for i in range(256))
     assert not any(w in hints for w in ("dyed", "blue hair", "red hair", "lavender", "mustard"))
     assert "middle-class American" in rules.background_prompt("anime", "A park.")
+
+
+# Value: protects=a member is drawn as the gender and age the writer read from the chat, unless the operator's note
+# says otherwise, and two shows never start from the same people; fails_when=the writer's looks never reach the
+# prompt, the operator note stops winning, or the offset is dropped; why_new=the everyday run drew Lucía, Coach Bea,
+# Ruth and Gwen as men and the same four people in three shows (2026-11-24); seam=none; no_claim=what the model draws
+def test_the_writers_looks_reach_the_prompt_and_the_operator_note_wins(lake_show, beats_s01e01):
+    import copy
+    from chatcom.core import bible as bible_ops
+    bible = json.loads(lake_show.bible_path.read_text("utf-8"))
+    a, b = bible["cast"][0]["name"], bible["cast"][1]["name"]
+    beats = copy.deepcopy(beats_s01e01)
+    beats["bible_update"]["cast"] = [{"name": a, "looks": "a woman in her 40s"}, {"name": b, "looks": "a man in his 60s"}]
+    from test_window_bible import WIN, WRITER
+    kw = {"window_entry": WIN, "writer": WRITER}
+    out = bible_ops.apply_beats(bible, beats, **kw)
+    assert {m["name"]: m.get("looks") for m in out["cast"]}[a] == "a woman in her 40s"
+    later = copy.deepcopy(beats)
+    later["episode"] = bible_ops.current_code(out)
+    later["bible_update"]["cast"] = [{"name": a, "looks": "a man in his 20s"}]
+    again = bible_ops.apply_beats(out, later, **kw)
+    assert {m["name"]: m.get("looks") for m in again["cast"]}[a] == "a woman in her 40s"   # set once
+    setup = json.loads(lake_show.setup_path.read_text("utf-8")) if lake_show.setup_path.exists() else {}
+    lake_show.setup_path.write_text(json.dumps({**setup, "looks": {b: "a woman in her 50s"}}), "utf-8")
+    looks = casting.looks_for(lake_show, out["cast"])
+    assert looks[a] == "a woman in her 40s" and looks[b] == "a woman in her 50s"   # the operator note wins
+    prompt = rules.pose_prompt("sitcom", out["cast"][0], "neutral", from_photo=False, first=True, note=looks[a])
+    assert "a woman in her 40s" in prompt
+
+
+def test_two_shows_start_from_different_people():
+    one = rules.plan({"members": [], "backgrounds": []}, [member("A")], "sitcom", "THE ORTEGAS")
+    two = rules.plan({"members": [], "backgrounds": []}, [member("A")], "sitcom", "PAGE TURNERS")
+    first = lambda calls: next(c.prompt for c in calls if c.kind == "pose")
+    assert first(one) != first(two)
+    assert len({rules.look_hint((i + rules.show_offset("X", "anime")) % 256) for i in range(256)}) == 256

@@ -103,13 +103,15 @@ def _photos(show: store.Show, sheet: dict, needed: set[str]) -> dict[str, Path]:
 
 
 def looks_for(show: store.Show, members: list[dict]) -> dict[str, str]:
-    """The operator's appearance notes (setup.json `looks`), keyed by cast name.
-    A note may name a member by any of their names or nicknames."""
+    """How each member looks, keyed by cast name: the operator's note (setup.json
+    `looks`, by any of their names or nicknames) wins; else the writer's `looks`
+    from the bible (gender and rough age)."""
     setup = store.read_json(show.setup_path) if show.setup_path.exists() else {}
     notes = {k.strip().lower(): v.strip() for k, v in (setup.get("looks") or {}).items() if v and v.strip()}
     out = {}
     for m in members:
         note = next((notes[n.lower()] for n in (m["name"], *m.get("aliases", [])) if n.lower() in notes), None)
+        note = note or m.get("looks")
         if note:
             out[m["name"]] = note
     return out

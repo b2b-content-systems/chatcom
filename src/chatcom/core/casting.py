@@ -66,6 +66,12 @@ OUTFIT = ("a heather-grey crewneck sweatshirt and jeans", "a navy quarter-zip pu
           "a faded college-logo T-shirt and athletic shorts")
 
 
+def show_offset(title: str | None, look: str) -> int:
+    """Where a show starts in the list of starting looks, so two shows never share a cast (the first everyday run,
+    2026-11-24, drew the same four people in three shows). Stable for a show; members stay distinct."""
+    return int(hashlib.sha256(f"{title or ''}|{look}".encode()).hexdigest()[:8], 16) % 256
+
+
 def look_hint(index: int) -> str:
     """Distinct for the first 256 members. The prompt never names a member, so two sparse members with the same
     hint would get the same content key and share one drawing. Changing a hint redraws that member (cache keys)."""
@@ -139,7 +145,7 @@ def plan(sheet: dict, members: list[dict], look: str, title: str | None,
          new_locations: list[dict] | None = None, looks: dict[str, str] | None = None) -> list[Call]:
     """Every image this show still needs, in the order they must be made.
     `members` are bible cast entries (with role and traits); `sheet` is cast.json; `looks` maps a member's name
-    to the operator's appearance note."""
+    to how they look (the operator's note, else the writer's gender and rough age)."""
     calls: list[Call] = []
     if not sheet.get("style_sheet"):
         calls.append(Call("style", style_prompt(look, title), aspect="16:9", take=sheet.get("take_id", "")))
@@ -155,8 +161,8 @@ def plan(sheet: dict, members: list[dict], look: str, title: str | None,
             refs = ["style"] + ([f"photo:{m['name']}"] if first and from_photo else [] if first
                                 else [f"pose:{m['name']}:neutral"])
             note = (looks or {}).get(m["name"])
-            calls.append(Call("pose", pose_prompt(look, m, pose, from_photo=from_photo, first=first, index=index,
-                                                  note=note),
+            calls.append(Call("pose", pose_prompt(look, m, pose, from_photo=from_photo, first=first,
+                                                  index=(index + show_offset(title, look)) % 256, note=note),
                               member=m["name"], pose=pose, refs=refs, take=entry.get("take_id", "") if first else ""))
     for b in sheet["backgrounds"]:
         if not b.get("file"):

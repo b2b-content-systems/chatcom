@@ -170,6 +170,8 @@ def apply_beats(bible: dict, beats: dict, *, window_entry: dict, writer: dict,
             m["role"] = c["role"]
         if c.get("texting_voice"):
             m["texting_voice"] = c["texting_voice"]
+        if c.get("looks") and not m.get("looks"):  # set once; the operator corrects it in setup.json `looks`
+            m["looks"] = c["looks"]
         for t in c.get("traits_add", []):
             if t not in m["traits"]:
                 m["traits"].append(t)
