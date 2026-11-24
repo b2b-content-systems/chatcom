@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.1.0.dev11 (unreleased)
+
+Next Step 4, part 3: the MP4 for the group, and the commit.
+
+### Added
+- `chatcom render <show>` now ends with the MP4 to send: `episodes/<code>/episode_001.mp4`, 16 MB or less by
+  default. The last line it prints is that file. A later encode writes `episode_002.mp4` and keeps the first.
+- `--max-size SIZE` (like `16MB` or `15.5MB`) sets the cap. If the first encode is too big, chatcom tries up to 3
+  lower bitrates. If it still cannot fit, it exits 5 with `CHATCOM_E_SIZE_CAP` and each try's size, and keeps the
+  render, so `chatcom render <show> --max-size <size>` runs only the encode.
+- The two "Previously on" stills: frames 0.5 s into scenes 1 and 3, saved in `episodes/<code>/stills/`. Next
+  week's episode opens with them.
+- `chatcom commit <show>`: adds the encoded episode's drawings and log entry to the show's memory. Starting the
+  next episode (`chatcom ingest` or `chatcom episode`) does it first and says so. A commit that stops halfway
+  finishes on the next run.
+- `chatcom render <show> --episode N`: a new MP4 of a committed episode. `chatcom rewrite <show> --episode N`:
+  writes the last committed episode again (before the next one starts), with the show's memory put back as it was.
+
+### Changed
+- `chatcom recast` now works until the commit. On a rendered or encoded episode it removes the old render; the MP4s
+  stay.
+- `chatcom rewrite` drops the sets the draft added, so the next draft cannot reuse a set id with the old picture.
+  It also writes the episode's new stage before it deletes the draft.
+- A relative `CHATCOM_HOME` now works for the render. The render's preflight checks that its Chrome is installed.
+
 ## 0.1.0.dev10 (unreleased)
 
 Next Step 4, part 2: the render.
