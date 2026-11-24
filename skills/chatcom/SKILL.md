@@ -100,7 +100,8 @@ For screenshots (Signal, iMessage, Discord, any app), the export is the folder o
    `CHATCOM_E_BEATS_INVALID` on a draft from an older chatcom: tell the person, and after a yes run
    `chatcom rewrite <show>`, then the command it prints. Exit 5 with `CHATCOM_E_SIZE_CAP` means the MP4 cannot
    fit the cap (16 MB by default): tell the person the sizes, and ask for their group chat's limit before you run
-   `chatcom --json render <show> --max-size <size>` (only the encode runs again). On success, give the person the
+   the command its `fix:` line names (`chatcom --json render <show> --max-size <size>`, plus `--episode N` when the
+   person asked for an earlier episode; only the encode runs again). On success, give the person the
    `mp4` path: that is the file to send to the group. The episode joins the show's memory when the next episode
    starts (or on `chatcom commit <show>`); until then `chatcom rewrite` and `chatcom recast` still work on it.
 

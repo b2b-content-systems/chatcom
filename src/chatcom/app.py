@@ -679,6 +679,10 @@ def rewrite(show: store.Show, episode: int | None = None) -> dict:
             code, st = _current_state(show, bible)
             st = state_ops.reopen_draft(st, store.now())
             store.write_json(show.state_path(code), st)   # state first: a stop below leaves `ingested`
+            snap = show.dir / "snapshots" / f"cast.{code}.pre.json"
+            if snap.is_file():  # a commit of this episode stopped after cast.json: put the show's cast back
+                store.write_atomic(show.cast_path, snap.read_bytes())
+                sheet = store.read_json(show.cast_path)
         else:
             code, st = _reopen_committed(show, bible, episode)
             sheet = store.read_json(show.cast_path)
@@ -712,7 +716,8 @@ def _reopen_committed(show: store.Show, bible: dict, number: int) -> tuple[str, 
         raise ChatcomError("CHATCOM_E_STATE", f"{code} has no snapshot from before its commit ({missing[0]})",
                            f"{code} was committed by an older chatcom; it cannot be written again.",
                            recovery="ask", context={"missing": missing})
-    st = state_ops.reopen_draft(store.read_json(show.state_path(code)), store.now(), also=("committed",))
+    # `ingested` here means an earlier undo stopped before bible.json: run it again to finish it
+    st = state_ops.reopen_draft(store.read_json(show.state_path(code)), store.now(), also=("committed", "ingested"))
     # order: the state first, then cast.json, then bible.json (the marker that the commit is undone)
     store.write_json(show.state_path(code), st)
     store.write_atomic(show.cast_path, snaps["cast"].read_bytes())
@@ -768,7 +773,9 @@ def render(show: store.Show, *, episode: int | None = None, max_bytes: int | Non
         build = ep / "render"
         master = build / "master.mp4"
         kept = hyperframes.duration(master) if master.is_file() else -1.0
-        encode_only = kept > 0 and (st["stage"] == "rendered" or max_bytes is not None)
+        # a kept master matches the draft only from `rendered` on; at `cast` it is stale (a stopped rewrite or recast)
+        encode_only = kept > 0 and (st["stage"] == "rendered" or
+                                    (max_bytes is not None and st["stage"] in ("encoded", "committed")))
         binary = runtime.require() if runner is None and not encode_only else None   # preflight before any write
         beats = store.read_json(ep / "beats.json")
         sheet = store.read_json(ep / "cast.next.json")
@@ -814,7 +821,8 @@ def render(show: store.Show, *, episode: int | None = None, max_bytes: int | Non
         except ChatcomError as e:
             if not encode_only:
                 e.side_effects = "partial"
-            e.fix += f" The master is kept at {master}, so only the encode runs again."
+            retry = f"chatcom render {show.slug}" + (f" --episode {episode}" if episode is not None else "")
+            e.fix = e.fix.replace("chatcom render <show>", retry) + f" The master is kept at {master}."
             raise
         record = {"file": mp4.name, "bytes": mp4.stat().st_size, "max_bytes": cap, "tries": tries}
         st = {**st, "encoded": record, "stills": [p.relative_to(show.dir).as_posix() for p in stills],

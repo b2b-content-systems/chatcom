@@ -382,3 +382,83 @@ def test_ingest_finishes_a_commit_that_stopped_before_its_state(cast_show, fonts
     assert code == 0, err
     assert store.read_json(target)["stage"] == "committed"
     assert store.read_json(cast_show.state_path("S01E02"))["stage"] == "ingested"
+
+
+# ---- review fixes (pass 1) ---------------------------------------------------------------------------
+# Value: protects=a rewrite --episode N that stopped after its state or cast.json write finishes on a rerun;
+# fails_when=the rerun refuses the half-undone episode; why_new=specialist p1#1; seam=store.write_atomic (raises);
+# no_claim=a stop inside one atomic write
+@pytest.mark.parametrize("stop_at", ["cast", "bible"])
+def test_a_stopped_rewrite_of_a_committed_episode_finishes_on_rerun(cast_show, fonts, monkeypatch, stop_at):
+    _encoded(cast_show)
+    pre_bible, pre_cast = cast_show.bible_path.read_bytes(), cast_show.cast_path.read_bytes()
+    app.commit(cast_show)
+    target = cast_show.cast_path if stop_at == "cast" else cast_show.bible_path
+    real = store.write_atomic
+
+    def stop(path, data):
+        if Path(path) == target:
+            raise KeyboardInterrupt
+        real(path, data)
+    monkeypatch.setattr(store, "write_atomic", stop)
+    with pytest.raises(KeyboardInterrupt):
+        app.rewrite(cast_show, episode=1)
+    monkeypatch.setattr(store, "write_atomic", real)
+    res = app.rewrite(cast_show, episode=1)
+    assert res["episode"] == "S01E01" and res["stage"] == "ingested"
+    assert cast_show.bible_path.read_bytes() == pre_bible and cast_show.cast_path.read_bytes() == pre_cast
+
+
+# Value: protects=after a failed encode of a committed episode the fix names `--episode N` and the real slug;
+# fails_when=the retry acts on this week's episode; why_new=red team p1#1; seam=encoder.encode (raises);
+# no_claim=ffmpeg's own failures
+def test_a_failed_encode_of_an_earlier_episode_names_that_episode_in_the_fix(cast_show, fonts, monkeypatch):
+    _encoded(cast_show)
+    app.commit(cast_show)
+    _sized(monkeypatch, [9_000_000])  # every encode comes out at 9 MB
+    with pytest.raises(ChatcomError) as e:
+        app.render(cast_show, episode=1, max_bytes=encoder.parse_size("100KB"), runner=_never)
+    assert e.value.code == "CHATCOM_E_SIZE_CAP" and "after 1 try " in e.value.what
+    assert "chatcom render lake-house --episode 1 --max-size <size>" in e.value.fix and "<show>" not in e.value.fix
+
+
+# Value: protects=a master left at stage cast (a stopped rewrite or recast) is never encoded as the new episode;
+# fails_when=--max-size at cast takes the encode-only path; why_new=red team p1#2; seam=none; no_claim=none
+def test_a_stale_master_at_cast_is_rendered_again_even_with_max_size(cast_show, fonts):
+    _encoded(cast_show)
+    sp = cast_show.state_path("S01E01")
+    st = store.read_json(sp)
+    store.write_json(sp, {k: v for k, v in st.items() if k not in ("encoded", "stills")} | {"stage": "cast"})
+    calls = []
+
+    def counting(project, master, *, expected, log):
+        calls.append(1)
+        return fake_runner(project, master, expected=expected, log=log)
+    res = app.render(cast_show, max_bytes=encoder.DEFAULT_MAX_BYTES, runner=counting)
+    assert calls and not res["encode_only"] and res["stage"] == "encoded"
+
+
+# Value: protects=a commit stopped after cast.json is undone by rewrite, so its new sets are still dropped;
+# fails_when=rewrite compares with the half-written cast.json; why_new=red team p1#3; seam=store.write_json (raises);
+# no_claim=none
+def test_rewrite_after_a_commit_stopped_past_cast_json_puts_the_cast_back(cast_show, fonts, monkeypatch):
+    ep = cast_show.episode_dir("S01E01")
+    sheet = store.read_json(ep / "cast.next.json")
+    sheet["backgrounds"].append(dict(sheet["backgrounds"][0], id="boathouse", description="a boathouse at dusk"))
+    store.write_json(ep / "cast.next.json", sheet)
+    _encoded(cast_show)
+    pre_cast = cast_show.cast_path.read_bytes()
+    real = store.write_json
+
+    def stop(path, doc):
+        if Path(path) == cast_show.bible_path:
+            raise KeyboardInterrupt
+        real(path, doc)
+    monkeypatch.setattr(store, "write_json", stop)
+    with pytest.raises(KeyboardInterrupt):
+        app.commit(cast_show)
+    monkeypatch.setattr(store, "write_json", real)
+    assert cast_show.cast_path.read_bytes() != pre_cast   # the stop left cast.json ahead of the bible
+    app.rewrite(cast_show)
+    assert cast_show.cast_path.read_bytes() == pre_cast
+    assert "boathouse" not in {b["id"] for b in store.read_json(ep / "cast.next.json")["backgrounds"]}

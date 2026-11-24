@@ -103,7 +103,8 @@ def encode(master: Path, folder: Path, *, max_bytes: int, seconds: float, log: P
         part.unlink(missing_ok=True)
         raise
     part.unlink(missing_ok=True)
-    raise ChatcomError("CHATCOM_E_SIZE_CAP", f"the MP4 stays over the {max_bytes} byte cap after {len(tries)} tries "
+    raise ChatcomError("CHATCOM_E_SIZE_CAP", f"the MP4 stays over the {max_bytes} byte cap after {len(tries)} "
+                       f"{'try' if len(tries) == 1 else 'tries'} "
                        f"({'; '.join(tries)})",
                        "Pass a bigger cap with `chatcom render <show> --max-size <size>` (the render is kept, so only "
                        "the encode runs), or check the group chat's video limit.", recovery="ask",
