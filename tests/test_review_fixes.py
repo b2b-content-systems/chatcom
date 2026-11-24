@@ -410,7 +410,7 @@ def test_every_skill_command_parses():
     fill = {"<show>": "lake-house", "<export>": "x.zip", "<beats.json path>": "b.json", "<your model name>": "m",
             "\"<their name in the chat>\"": "Dave", "\"<name>\"": "Sam",
             "<sitcom|anime|cartoon80s|truecrime|cutscene|facetime|flipphone|reality>": "sitcom",
-            "{show.slug}": "lake-house", "{slug}": "lake-house", "<file>": "x.zip", "F": "x.zip",
+            "{show.slug}": "lake-house", "{slug}": "lake-house", "{_number(committed_first)}": "1", "<file>": "x.zip", "F": "x.zip",
             "<export.zip|export.txt>": "x.zip", "<export>": "x.zip"}
     parser = cli.build_parser()
     for c in cmds:

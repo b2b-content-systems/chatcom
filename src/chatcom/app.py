@@ -384,7 +384,7 @@ def ingest(show: store.Show, export, *, accepted: bool, mode: str, since: dateti
            until: datetime | None = None, bottle: bool = False, max_days: int = window_ops.MAX_DAYS,
            max_unparsed: float = MAX_UNPARSED, source: str | None = None,
            thread: str | None = None, replace: bool = False, review: bool = False,
-           shots: dict | None = None) -> tuple[Path, window_ops.Window | None, dict]:
+           shots: dict | None = None, say=lambda s: None) -> tuple[Path, window_ops.Window | None, dict]:
     bible, sheet, setup = _load(show)
     exclude = setup.get("exclude", [])
     exports = _exports(export)
@@ -408,80 +408,105 @@ def ingest(show: store.Show, export, *, accepted: bool, mode: str, since: dateti
         code = bible_ops.current_code(bible)
         sp = show.state_path(code)
         prior = store.read_json(sp) if sp.exists() else None
+        _refuse_unfinished_undo(show, bible)
+        committed_first = None
+        if prior and prior["stage"] == "encoded" and replace:
+            raise ChatcomError("CHATCOM_E_STATE", f"{code} is encoded; --replace restarts a screenshot import, and "
+                               "this episode's import is done",
+                               f"To change {code}, run `chatcom rewrite {show.slug}`. To start the next episode, run "
+                               "the same command without --replace.", context={"stage": "encoded"})
+        if prior and prior["stage"] == "encoded":  # O12: last week's episode commits when this one starts
+            done = _commit_locked(show, log)
+            committed_first = done["episode"]
+            say(f"{done['episode']}: committed; starting the next episode")
+            bible, sheet, setup = _load(show)
+            code = bible_ops.current_code(bible)
+            sp = show.state_path(code)
+            prior = store.read_json(sp) if sp.exists() else None
+        elif _finish_commit(show, bible):
+            pass
         if prior and prior["stage"] not in ("ingested", *state_ops.IMPORTING):
             # checked before anything is read: a drafted episode is never reset
             raise ChatcomError("CHATCOM_E_STATE", f"{code} is already {prior['stage']}",
                                f"Write the episode again with `chatcom rewrite {show.slug}` (it keeps the "
                                "messages, the transcript and the drawings).",
                                context={"stage": prior["stage"], "folder": str(show.episode_dir(code))})
-        if prior and prior["stage"] in state_ops.IMPORTING and not replace:
-            # Only the transcript this import wrote may continue it.
-            want = prior.get("transcript")
-            if not (want and all(Path(e).expanduser().resolve() == Path(want).resolve() for e in exports)):
-                raise ChatcomError("CHATCOM_E_IMPORT_IN_PROGRESS",
-                                   f"{code} has a screenshot import at stage '{prior['stage']}'",
-                                   f"Continue it with --export {want}, or pass --replace to start the import over."
-                                   if want else "Pass --replace to start the import over.",
-                                   context={"stage": prior["stage"], "transcript": want})
-        if images and mode == "session":
-            # skill mode: copy, then the session reads them (read-prep / read-submit)
-            from chatcom import reading
-            import shutil
-            dest = show.episode_dir(code) / "import"
-            fresh = dest.with_name("import.new")  # check and copy first; the old import goes only on success
-            shutil.rmtree(fresh, ignore_errors=True)
-            try:
-                copies = reading.copy_images(registry.expand(exports), fresh, (shots or {}).get("max_images") or 40)
-            except BaseException:
+        try:
+            if prior and prior["stage"] in state_ops.IMPORTING and not replace:
+                # Only the transcript this import wrote may continue it.
+                want = prior.get("transcript")
+                if not (want and all(Path(e).expanduser().resolve() == Path(want).resolve() for e in exports)):
+                    raise ChatcomError("CHATCOM_E_IMPORT_IN_PROGRESS",
+                                       f"{code} has a screenshot import at stage '{prior['stage']}'",
+                                       f"Continue it with --export {want}, or pass --replace to start the import over."
+                                       if want else "Pass --replace to start the import over.",
+                                       context={"stage": prior["stage"], "transcript": want})
+            if images and mode == "session":
+                # skill mode: copy, then the session reads them (read-prep / read-submit)
+                from chatcom import reading
+                import shutil
+                dest = show.episode_dir(code) / "import"
+                fresh = dest.with_name("import.new")  # check and copy first; the old import goes only on success
                 shutil.rmtree(fresh, ignore_errors=True)
-                raise
-            shutil.rmtree(dest, ignore_errors=True)
-            fresh.rename(dest)
-            st = state_ops.new(code, None, mode, store.now(), stage="copied", reader="session")
-            st["source"] = "screenshots"
-            st["reader"] = reading.reader_state(copies, shots or {})
+                try:
+                    copies = reading.copy_images(registry.expand(exports), fresh, (shots or {}).get("max_images") or 40)
+                except BaseException:
+                    shutil.rmtree(fresh, ignore_errors=True)
+                    raise
+                shutil.rmtree(dest, ignore_errors=True)
+                fresh.rename(dest)
+                st = state_ops.new(code, None, mode, store.now(), stage="copied", reader="session")
+                st["source"] = "screenshots"
+                st["reader"] = reading.reader_state(copies, shots or {})
+                store.write_json(sp, st)
+                log.write(f"{code}: {len(copies)} screenshot copies for the session to read")
+                return dest, None, st
+            shot_ctx = (shot_context(shots, mode, bible["show"]["operator_sender"], show.episode_dir(code) / "import",
+                                     show.dir / "cache" / "reads") if images else None)
+            res, _ = _parse_export(exports, tz, setup.get("aliases", {}), max_unparsed, log, show, key=key,
+                                   source=source, thread=thread, shots=shot_ctx)
+            if review and res.adapter == "screenshots" and res.artifacts.get("transcript"):
+                st = state_ops.new(code, None, mode, store.now(), stage="read", reader=shot_ctx["reader"].mode)
+                st["source"] = "screenshots"
+                st["transcript"] = res.artifacts["transcript"]
+                if res.artifacts.get("reader_calls"):
+                    st["reader_calls"] = res.artifacts["reader_calls"]  # paid reads count even when review stops here
+                store.write_json(sp, st)
+                log.write(f"{code}: screenshots read, stopped for review at {st['transcript']}")
+                return Path(st["transcript"]), None, st
+            check_exclusions_match(show, setup, res)
+            if res.adapter == "screenshots":
+                check_screenshot_exclusions(setup, res)
+            win = window_ops.select(res.messages, bible_ops.last_cursor(bible), since=_aware(since, tz),
+                                    until=_aware(until, tz), max_days=max_days, bottle=bottle,
+                                    exclude=setup.get("exclude", []), aliases=setup.get("aliases"),
+                                    key=key, adapter=res.adapter)
+            # A re-ingest before the draft is accepted starts the episode over, with
+            # fresh writer attempts: this is the "rerun the skill" recovery.
+            st = state_ops.new(code, win.log_entry(), mode, store.now(),
+                               reader=shot_ctx["reader"].mode if shot_ctx else (prior or {}).get("accepted_flow", {}).get("reader"))
+            st["bottle_requested"] = bottle
+            st["unparsed_rate"] = round(res.unparsed_rate, 4)
+            st["source"] = res.adapter
+            st["resume"] = {"method": win.method, "warning": win.warning}
+            continuing = bool(prior and prior["stage"] == "read" and prior.get("transcript") and
+                              all(Path(e).expanduser().resolve() == Path(prior["transcript"]).resolve() for e in exports))
+            calls = res.artifacts.get("reader_calls") or (prior.get("reader_calls") if continuing else 0)
+            if calls:  # billed to the operator's own Gemini key; only a continued --review import keeps its count
+                st["reader_calls"] = calls
+            if res.artifacts.get("reader_answered"):
+                st["reader_answered"] = res.artifacts["reader_answered"]
+            ep = show.episode_dir(code)
+            store.write_jsonl(ep / "messages.jsonl", win.messages)
             store.write_json(sp, st)
-            log.write(f"{code}: {len(copies)} screenshot copies for the session to read")
-            return dest, None, st
-        shot_ctx = (shot_context(shots, mode, bible["show"]["operator_sender"], show.episode_dir(code) / "import",
-                                 show.dir / "cache" / "reads") if images else None)
-        res, _ = _parse_export(exports, tz, setup.get("aliases", {}), max_unparsed, log, show, key=key,
-                               source=source, thread=thread, shots=shot_ctx)
-        if review and res.adapter == "screenshots" and res.artifacts.get("transcript"):
-            st = state_ops.new(code, None, mode, store.now(), stage="read", reader=shot_ctx["reader"].mode)
-            st["source"] = "screenshots"
-            st["transcript"] = res.artifacts["transcript"]
-            if res.artifacts.get("reader_calls"):
-                st["reader_calls"] = res.artifacts["reader_calls"]  # paid reads count even when review stops here
-            store.write_json(sp, st)
-            log.write(f"{code}: screenshots read, stopped for review at {st['transcript']}")
-            return Path(st["transcript"]), None, st
-        check_exclusions_match(show, setup, res)
-        if res.adapter == "screenshots":
-            check_screenshot_exclusions(setup, res)
-        win = window_ops.select(res.messages, bible_ops.last_cursor(bible), since=_aware(since, tz),
-                                until=_aware(until, tz), max_days=max_days, bottle=bottle,
-                                exclude=setup.get("exclude", []), aliases=setup.get("aliases"),
-                                key=key, adapter=res.adapter)
-        # A re-ingest before the draft is accepted starts the episode over, with
-        # fresh writer attempts: this is the "rerun the skill" recovery.
-        st = state_ops.new(code, win.log_entry(), mode, store.now(),
-                           reader=shot_ctx["reader"].mode if shot_ctx else (prior or {}).get("accepted_flow", {}).get("reader"))
-        st["bottle_requested"] = bottle
-        st["unparsed_rate"] = round(res.unparsed_rate, 4)
-        st["source"] = res.adapter
-        st["resume"] = {"method": win.method, "warning": win.warning}
-        continuing = bool(prior and prior["stage"] == "read" and prior.get("transcript") and
-                          all(Path(e).expanduser().resolve() == Path(prior["transcript"]).resolve() for e in exports))
-        calls = res.artifacts.get("reader_calls") or (prior.get("reader_calls") if continuing else 0)
-        if calls:  # billed to the operator's own Gemini key; only a continued --review import keeps its count
-            st["reader_calls"] = calls
-        if res.artifacts.get("reader_answered"):
-            st["reader_answered"] = res.artifacts["reader_answered"]
-        ep = show.episode_dir(code)
-        store.write_jsonl(ep / "messages.jsonl", win.messages)
-        store.write_json(sp, st)
-        log.write(f"{code}: window {win.log_entry()} excluded {win.excluded} resume {win.method}")
+            log.write(f"{code}: window {win.log_entry()} excluded {win.excluded} resume {win.method}")
+        except ChatcomError as e:
+            if committed_first:  # the error must not read as "nothing changed"
+                e.side_effects = "partial"
+                e.fix += (f" {committed_first} was committed first and joined the show; "
+                          f"`chatcom rewrite {show.slug} --episode {_number(committed_first)}` undoes that until "
+                          "the next episode starts.")
+            raise
     return ep / "messages.jsonl", win, st
 
 
@@ -624,50 +649,155 @@ def status(show: store.Show) -> dict:
             "attempts": st["attempts"] if st else 0, "prep_cycles": st.get("prep_cycles", 0) if st else 0,
             "writer_mode": st.get("writer_mode") if st else None, "source": st.get("source") if st else None,
             "resume": st.get("resume") if st else None, "lock": show.lock_holder(),
-            "next": state_ops.next_command(st, show.slug)}
+            "next": (_undo_command(show, undo) if (undo := _unfinished_undo(show, bible))
+                     else state_ops.next_command(st, show.slug))}
+
+
+def _number(code: str) -> int:
+    return int(code.split("E", 1)[1])
+
+
+def _drop_new_sets(ep: Path, committed: dict) -> None:
+    """Keep only the sets cast.json has in cast.next.json. Casting matches a set
+    by id, so a new draft that reuses this draft's new set id with another
+    description would otherwise render the old picture. The image cache keeps a
+    redraw of the same description free."""
+    path = ep / "cast.next.json"
+    if not path.exists():
+        return
+    sheet = store.read_json(path)
+    keep = {b["id"] for b in committed.get("backgrounds", [])}
+    kept = [b for b in sheet.get("backgrounds", []) if b["id"] in keep]
+    if len(kept) != len(sheet.get("backgrounds", [])):
+        store.write_json(path, {**sheet, "backgrounds": kept})
+
+
+def _clear_draft(ep: Path) -> None:
+    import shutil
+    for name in ("beats.json", "bible.next.json"):
+        (ep / name).unlink(missing_ok=True)
+    if (ep / "render").is_dir():
+        shutil.rmtree(ep / "render")
 
 
 def rewrite(show: store.Show, episode: int | None = None) -> dict:
-    """Send this week's episode back to the writer: drafted, cast or rendered
-    -> ingested. The draft and the render go; the messages, the transcript, the
-    drawings (cast.next.json and the image cache) and the paid-call counts stay."""
-    import shutil
+    """Send an episode back to the writer -> `ingested`. The draft and the
+    render go; the messages, the transcript, the drawings (cast.next.json and
+    the image cache), the encoded MP4s and the paid-call counts stay.
+
+    This week's episode: any stage from drafted to encoded. `--episode N` for
+    the last committed episode: bible.json and cast.json go back to their
+    snapshots from before it, if the next episode has not started."""
     log = store.RunLog(show, "rewrite")
     with show.lock():
-        bible, _, _ = _load(show)
-        code, st = _current_state(show, bible)
-        if episode is not None and int(code.split("E", 1)[1]) != episode:
-            raise ChatcomError("CHATCOM_E_STATE", f"episode {episode} is not this week's episode ({code})",
-                               "Only this week's episode can be written again for now; committed episodes "
-                               "arrive with the commit step.", context={"episode": code})
-        st = state_ops.reopen_draft(st, store.now())
+        bible, sheet, _ = _load(show)
+        current = bible_ops.current_code(bible)
+        if episode is None or episode == _number(current):
+            code, st = _current_state(show, bible)
+            st = state_ops.reopen_draft(st, store.now())
+            store.write_json(show.state_path(code), st)   # state first: a stop below leaves `ingested`
+            snap = show.dir / "snapshots" / f"cast.{code}.pre.json"
+            if snap.is_file():  # a commit of this episode stopped after cast.json: put the show's cast back
+                store.write_atomic(show.cast_path, snap.read_bytes())
+                sheet = store.read_json(show.cast_path)
+        else:
+            code, st = _reopen_committed(show, bible, episode)
+            sheet = store.read_json(show.cast_path)
         ep = show.episode_dir(code)
-        for name in ("beats.json", "bible.next.json"):
-            (ep / name).unlink(missing_ok=True)
-        if (ep / "render").is_dir():
-            shutil.rmtree(ep / "render")
-        store.write_json(show.state_path(code), st)
+        _clear_draft(ep)
+        _drop_new_sets(ep, sheet)
         log.write(f"{code}: back to ingested")
     return {"episode": code, "stage": st["stage"], "next_command": state_ops.next_command(st, show.slug)}
 
 
-def render(show: store.Show, *, runner=None, say=lambda s: None) -> dict:
-    """The render stage: cast (or rendered, to render again) -> rendered.
-    Writes episodes/<code>/render/ (the HyperFrames project) and its master.mp4."""
-    from chatcom.adapters import composer, hyperframes, runtime
+def _reopen_committed(show: store.Show, bible: dict, number: int) -> tuple[str, dict]:
+    last = (bible.get("episodes") or [None])[-1]
+    current = bible_ops.current_code(bible)
+    if not last or _number(last["code"]) != number:
+        latest = f"the last committed one is {last['code']}" if last else "none is committed yet"
+        raise ChatcomError("CHATCOM_E_STATE", f"episode {number} is not this week's episode ({current}), and "
+                           f"only the last committed episode can be written again ({latest})",
+                           f"Run `chatcom rewrite {show.slug}` for this week's episode.",
+                           context={"episode": number, "current": current})
+    code = last["code"]
+    nxt = show.state_path(current)
+    if nxt.exists():
+        raise ChatcomError("CHATCOM_E_STATE", f"{current} has started ({store.read_json(nxt)['stage']}), so "
+                           f"{code} can no longer be written again",
+                           f"Keep {code} as it is, or delete the folder {show.episode_dir(current)} (this "
+                           "week's messages are in it) and run the same command again.",
+                           recovery="ask", context={"episode": code, "next": current})
+    snaps = {name: show.dir / "snapshots" / f"{name}.{code}.pre.json" for name in ("bible", "cast")}
+    missing = [str(p) for p in snaps.values() if not p.is_file()]
+    if missing:
+        raise ChatcomError("CHATCOM_E_STATE", f"{code} has no snapshot from before its commit ({missing[0]})",
+                           f"{code} was committed by an older chatcom; it cannot be written again.",
+                           recovery="ask", context={"missing": missing})
+    # `ingested` here means an earlier undo stopped before bible.json: run it again to finish it
+    st = state_ops.reopen_draft(store.read_json(show.state_path(code)), store.now(), also=("committed", "ingested"))
+    # order: the state first, then cast.json, then bible.json (the marker that the commit is undone)
+    store.write_json(show.state_path(code), st)
+    store.write_atomic(show.cast_path, snaps["cast"].read_bytes())
+    store.write_atomic(show.bible_path, snaps["bible"].read_bytes())
+    return code, st
+
+
+def _episode_for(show: store.Show, bible: dict, number: int | None) -> tuple[str, dict, dict | None]:
+    """(code, state, previous log entry) for this week's episode, or for a committed one."""
+    current = bible_ops.current_code(bible)
+    if number is None or number == _number(current):
+        code, st = _current_state(show, bible)
+        return code, st, _previous_entry(bible)
+    episodes = bible.get("episodes") or []
+    k = next((i for i, e in enumerate(episodes) if _number(e["code"]) == number), None)
+    if k is None:
+        raise ChatcomError("CHATCOM_E_STATE", f"episode {number} is not committed and is not this week's ({current})",
+                           f"`chatcom status {show.slug}` prints this week's episode.",
+                           context={"episode": number, "current": current})
+    code = episodes[k]["code"]
+    sp = show.state_path(code)
+    if not sp.exists() or not (show.episode_dir(code) / "cast.next.json").exists():
+        raise ChatcomError("CHATCOM_E_STATE", f"{code} has no draft or drawings left in {show.episode_dir(code)}",
+                           f"{code} cannot be rendered again.", context={"episode": code})
+    return code, store.read_json(sp), (episodes[k - 1] if k else None)
+
+
+def _previous_entry(bible: dict) -> dict | None:
+    from chatcom.core import render as render_ops
+    return render_ops.previous_entry(bible)
+
+
+STILL_SCENES = ("scene_1", "scene_3")   # D15: 0.5 s into scenes 1 and 3
+
+
+def render(show: store.Show, *, episode: int | None = None, max_bytes: int | None = None, runner=None,
+           say=lambda s: None) -> dict:
+    """The render stage: cast -> rendered (render/master.mp4) -> encoded
+    (episodes/<code>/episode_NNN.mp4, under the size cap, plus the two
+    "Previously on" stills). A master that exists is only encoded again when it
+    is waiting at `rendered` or `--max-size` is given; otherwise the episode is
+    rendered again. `episode` re-renders a committed episode; its stage stays."""
+    from chatcom.adapters import composer, encoder, hyperframes, runtime
     from chatcom.core import render as render_ops
     log = store.RunLog(show, "render")
     with show.lock():
         bible, _, _ = _load(show)
-        code, st = _current_state(show, bible)
-        state_ops.require(st, "cast", "rendered")
-        binary = runtime.require() if runner is None else None   # preflight before any write
+        code, st, previous = _episode_for(show, bible, episode)
+        committed = st["stage"] == "committed"
+        if not committed:
+            state_ops.require(st, "cast", "rendered", "encoded")
         ep = show.episode_dir(code)
+        build = ep / "render"
+        master = build / "master.mp4"
+        kept = hyperframes.duration(master) if master.is_file() else -1.0
+        # a kept master matches the draft only from `rendered` on; at `cast` it is stale (a stopped rewrite or recast)
+        encode_only = kept > 0 and (st["stage"] == "rendered" or
+                                    (max_bytes is not None and st["stage"] in ("encoded", "committed")))
+        binary = runtime.require() if runner is None and not encode_only else None   # preflight before any write
         beats = store.read_json(ep / "beats.json")
         sheet = store.read_json(ep / "cast.next.json")
         nxt = store.read_json(ep / "bible.next.json")
-        number = int(code.split("E", 1)[1])
-        problems = render_ops.fit_problems(beats, number)
+        problems = render_ops.fit_problems(beats, _number(code))
         if problems:  # a draft from before the bubble limit (chatcom 0.1.0.dev8 or older)
             raise ChatcomError("CHATCOM_E_BEATS_INVALID",
                                f"{code}: {problems[0]['path']} {problems[0]['message']}",
@@ -675,29 +805,135 @@ def render(show: store.Show, *, runner=None, say=lambda s: None) -> dict:
                                f"`{state_ops.next_command({**st, 'stage': 'ingested'}, show.slug)}`. The "
                                "messages, the transcript and the drawings are kept.",
                                recovery="ask", context={"problems": problems, "episode": code})
-        tl = render_ops.timeline(beats, sheet, render_ops.previous_entry(bible),
+        tl = render_ops.timeline(beats, sheet, previous,
                                  show_title=nxt["show"]["title"] or beats.get("show_title") or show.slug)
-        build = ep / "render"
-        master = build / "master.mp4"
-        run = runner or (lambda p, m, **kw: hyperframes.render(p, m, binary=binary, **kw))
+        index = build / "index.html"
+        if encode_only:
+            seconds = kept
+        else:
+            run = runner or (lambda p, m, **kw: hyperframes.render(p, m, binary=binary, **kw))
+            try:
+                index = composer.write_project(tl, sheet, show.dir, build, big_fonts=runtime.fonts_dir())
+                say(f"{code}: rendering {tl.total:.0f} s with HyperFrames {runtime.VERSION}")
+                seconds = run(index.parent, master, expected=tl.total, log=build / "render.log")
+            except BaseException as e:  # a coded error, an OS error or Ctrl-C
+                if st["stage"] in ("rendered", "encoded"):  # the old master is gone: back to `cast`
+                    st = {**state_ops._unencoded(st), "stage": "cast", "updated": store.now()}
+                    store.write_json(show.state_path(code), st)
+                    if isinstance(e, ChatcomError):
+                        e.side_effects = "partial"
+                        e.fix += f" The earlier render was removed; {code} is back at stage 'cast'."
+                raise
+            if not committed:
+                st = {**state_ops._unencoded(st), "stage": "rendered", "updated": store.now()}
+                store.write_json(show.state_path(code), st)
+            log.write(f"{code}: rendered {seconds:.2f} s")
+        cap = max_bytes or encoder.DEFAULT_MAX_BYTES
+        say(f"{code}: encoding for a {cap / 1e6:g} MB cap")
         try:
-            index = composer.write_project(tl, sheet, show.dir, build, big_fonts=runtime.fonts_dir())
-            say(f"{code}: rendering {tl.total:.0f} s with HyperFrames {runtime.VERSION}")
-            seconds = run(index.parent, master, expected=tl.total, log=build / "render.log")
-        except BaseException as e:  # a coded error, an OS error or Ctrl-C
-            if st["stage"] == "rendered":  # the old master is gone: the episode is back to `cast`
-                store.write_json(show.state_path(code), {**st, "stage": "cast", "updated": store.now()})
-                if isinstance(e, ChatcomError):
-                    e.side_effects = "partial"
-                    e.fix += f" The earlier render was removed; {code} is back at stage 'cast'."
+            mp4, tries = encoder.encode(master, ep, max_bytes=cap, seconds=seconds, log=build / "encode.log")
+            starts = {name: tl.segment(name).start for name in STILL_SCENES
+                      if any(s.name == name for s in tl.segments)}
+            stills = encoder.stills(master, starts, ep / "stills", build / "encode.log")
+        except ChatcomError as e:
+            if not encode_only:
+                e.side_effects = "partial"
+            retry = f"chatcom render {show.slug}" + (f" --episode {episode}" if episode is not None else "")
+            e.fix = e.fix.replace("chatcom render <show>", retry) + f" The master is kept at {master}."
             raise
-        if st["stage"] == "cast":
-            st = state_ops.advance(st, "rendered", store.now())
-        st = {**st, "updated": store.now()}
+        record = {"file": mp4.name, "bytes": mp4.stat().st_size, "max_bytes": cap, "tries": tries}
+        st = {**st, "encoded": record, "stills": [p.relative_to(show.dir).as_posix() for p in stills],
+              "updated": store.now()}
+        if st["stage"] == "rendered":
+            st = state_ops.advance(st, "encoded", store.now())
         store.write_json(show.state_path(code), st)
-        log.write(f"{code}: rendered {seconds:.2f} s")
-    return {"episode": code, "stage": st["stage"], "master": str(master), "seconds": round(seconds, 2),
-            "project": str(index), "next_command": state_ops.next_command(st, show.slug)}
+        log.write(f"{code}: encoded {mp4.name}, {record['bytes']} bytes ({'; '.join(tries)})")
+    return {"episode": code, "stage": st["stage"], "master": str(master), "mp4": str(mp4),
+            "bytes": record["bytes"], "max_bytes": cap, "tries": tries, "seconds": round(seconds, 2),
+            "encode_only": encode_only, "stills": [str(p) for p in stills], "project": str(index),
+            "next_command": state_ops.next_command(st, show.slug)}
+
+
+def commit(show: store.Show) -> dict:
+    """encoded -> committed: the episode's cast and log entry join the show."""
+    log = store.RunLog(show, "commit")
+    with show.lock():
+        res = _commit_locked(show, log)
+    return res
+
+
+def _unfinished_undo(show: store.Show, bible: dict) -> str | None:
+    """The code of a committed episode whose `rewrite --episode N` stopped
+    halfway: bible.json still lists it, but its state left `committed`."""
+    last = (bible.get("episodes") or [None])[-1]
+    if not last:
+        return None
+    sp = show.state_path(last["code"])
+    if sp.exists() and store.read_json(sp)["stage"] not in ("committed", "encoded"):
+        return last["code"]
+    return None
+
+
+def _undo_command(show: store.Show, code: str) -> str:
+    return f"chatcom rewrite {show.slug} --episode {_number(code)}"
+
+
+def _refuse_unfinished_undo(show: store.Show, bible: dict) -> None:
+    code = _unfinished_undo(show, bible)
+    if code:
+        raise ChatcomError("CHATCOM_E_STATE", f"writing {code} again stopped halfway: the show still lists it, but "
+                           "its drawings and log were partly put back",
+                           f"Run `{_undo_command(show, code)}` again to finish it, then start the next episode.",
+                           recovery="ask", context={"episode": code})
+
+
+def _finish_commit(show: store.Show, bible: dict) -> str | None:
+    """A commit stopped after bible.json (the done marker) and before its state:
+    mark the episode committed. Returns its code."""
+    last = (bible.get("episodes") or [None])[-1]
+    if not last:
+        return None
+    sp = show.state_path(last["code"])
+    if sp.exists():
+        st = store.read_json(sp)
+        if st["stage"] == "encoded":
+            store.write_json(sp, state_ops.advance(st, "committed", store.now()))
+            return last["code"]
+    return None
+
+
+def _commit_locked(show: store.Show, log) -> dict:
+    """The caller holds the show lock.
+
+        snapshots (bible + cast, from before the episode) -> cast.json ->
+        bible.json (the done marker) -> state `committed`
+
+    A stop after cast.json writes it again on the next run; a stop after
+    bible.json only marks the state (_finish_commit)."""
+    bible, _, _ = _load(show)
+    finished = _finish_commit(show, bible)
+    if finished:
+        log.write(f"{finished}: committed (the earlier run stopped before its state)")
+        return {"episode": finished, "stage": "committed", "next_command": state_ops.next_command(None, show.slug)}
+    code, st = _current_state(show, bible)
+    state_ops.require(st, "encoded")
+    ep = show.episode_dir(code)
+    nxt = store.read_json(ep / "bible.next.json")
+    entry = next(e for e in nxt["episodes"] if e["code"] == code)
+    entry["stills"] = list(st.get("stills") or [])[:2]
+    nxt = bible_ops.load(json.dumps(nxt))   # schema check before anything is written
+    sheet = store.read_json(ep / "cast.next.json")
+    check("cast", sheet, code="CHATCOM_E_BIBLE_INVALID", what=f"{ep / 'cast.next.json'} is not valid",
+          fix=f"Draw the episode again with `chatcom recast {show.slug}`.")
+    show.snapshot_bible(code)
+    show.snapshot_cast(code)
+    store.write_json(show.cast_path, sheet)
+    store.write_json(show.bible_path, nxt)
+    st = state_ops.advance(st, "committed", store.now())
+    store.write_json(show.state_path(code), st)
+    log.write(f"{code}: committed ({st['encoded']['file']})")
+    return {"episode": code, "stage": "committed", "mp4": str(ep / st["encoded"]["file"]),
+            "next_command": state_ops.next_command(None, show.slug)}
 
 
 def run_writer(show: store.Show, writer: Writer, *, token_budget: int = ranking.DEFAULT_TOKEN_BUDGET,

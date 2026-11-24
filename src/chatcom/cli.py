@@ -191,11 +191,17 @@ def build_parser() -> argparse.ArgumentParser:
     w.add_argument("--file", required=True)
     w.add_argument("--model", required=True, help="the model that wrote the draft, as the session reports it")
 
-    rd = sub.add_parser("render", help="turn this week's cast episode into a 60-second video (no network, no keys)")
+    rd = sub.add_parser("render", help="turn this week's cast episode into the 60-second MP4 for the group "
+                                       "(no network, no keys)")
     rd.add_argument("show", nargs="?")
-    rw = sub.add_parser("rewrite", help="send this week's episode back to the writer (keeps messages and drawings)")
+    rd.add_argument("--episode", type=int, help="render a committed episode again (its number)")
+    rd.add_argument("--max-size", help="the MP4 size cap, like 16MB (the default); with a render kept, "
+                                       "only the encode runs")
+    cm = sub.add_parser("commit", help="add the encoded episode to the show (also happens when the next one starts)")
+    cm.add_argument("show", nargs="?")
+    rw = sub.add_parser("rewrite", help="send an episode back to the writer (keeps messages and drawings)")
     rw.add_argument("show", nargs="?")
-    rw.add_argument("--episode", type=int, help="the episode number; only this week's episode for now")
+    rw.add_argument("--episode", type=int, help="this week's episode (the default), or the last committed one")
 
     st = sub.add_parser("status", help="where this week's episode stands, and the next command")
     st.add_argument("show", nargs="?")
@@ -285,7 +291,8 @@ def cmd_ingest(args) -> int:
     path, win, st = app.ingest(show, args.export, accepted=args.accept_data_flow, mode="session", since=args.since,
                                until=args.until, bottle=args.bottle, max_days=args.max_days,
                                max_unparsed=args.max_unparsed, source=args.source, thread=args.thread,
-                               replace=args.replace, shots=_shots(args))
+                               replace=args.replace, shots=_shots(args),
+                               say=lambda m: print(m, file=sys.stderr))
     if win is None:  # screenshots: copied for the session to read
         nxt = app.state_ops.next_command(st, show.slug)
         emit(args, {"episode": st["episode"], "stage": st["stage"], "images": len(st["reader"]["copies"]),
@@ -344,7 +351,8 @@ def cmd_episode(args) -> int:
     path, win, st = app.ingest(show, args.export, accepted=True, mode=writer.mode, since=args.since,
                                until=args.until, bottle=args.bottle, max_days=args.max_days,
                                max_unparsed=args.max_unparsed, source=args.source, thread=args.thread,
-                               replace=args.replace, review=args.review, shots=_shots(args))
+                               replace=args.replace, review=args.review, shots=_shots(args),
+                               say=lambda m: print(m, file=sys.stderr))
     if win is None:  # --review: stopped after transcript.txt
         nxt = app.state_ops.next_command(st, show.slug)
         emit(args, {"episode": st["episode"], "stage": st["stage"], "transcript": str(path), "next_command": nxt},
@@ -471,10 +479,25 @@ def cmd_recast(args) -> int:
 
 
 def cmd_render(args) -> int:
+    from chatcom.adapters import encoder
     show = app.resolve_show(args.show)
-    res = app.render(show, say=lambda m: print(m, file=sys.stderr))
-    emit(args, res, [f"{res['episode']}: rendered {res['seconds']:.1f} s (the master; encode arrives next)",
-                     f"project: {res['project']}", res["master"]])
+    cap = encoder.parse_size(args.max_size) if args.max_size else None
+    res = app.render(show, episode=args.episode, max_bytes=cap, say=lambda m: print(m, file=sys.stderr))
+    how = "encoded the kept render" if res["encode_only"] else f"rendered {res['seconds']:.1f} s"
+    lines = [f"{res['episode']}: {how}; {res['bytes'] / 1e6:.1f} MB of a {res['max_bytes'] / 1e6:g} MB cap "
+             f"({'; '.join(res['tries'])})"]
+    if res["stage"] == "encoded":
+        lines.append(f"send this MP4 to the group. It joins the show when the next episode starts, or run "
+                     f"`chatcom commit {show.slug}`; until then `chatcom rewrite` and `chatcom recast` still work.")
+    lines.append(res["mp4"])  # the last line is the file to send
+    emit(args, res, lines)
+    return 0
+
+
+def cmd_commit(args) -> int:
+    show = app.resolve_show(args.show)
+    res = app.commit(show)
+    emit(args, res, [f"{res['episode']}: committed; the next episode starts with `{res['next_command']}`"])
     return 0
 
 
@@ -528,7 +551,7 @@ def cmd_doctor(args) -> int:
 
 
 COMMANDS = {"new": cmd_new, "ingest": cmd_ingest, "episode": cmd_episode, "write-prep": cmd_write_prep,
-            "write-submit": cmd_write_submit, "read-prep": cmd_read_prep, "cast": cmd_cast, "recast": cmd_recast, "render": cmd_render, "rewrite": cmd_rewrite, "read-submit": cmd_read_submit, "status": cmd_status, "migrate": cmd_migrate, "shows": cmd_shows,
+            "write-submit": cmd_write_submit, "read-prep": cmd_read_prep, "cast": cmd_cast, "recast": cmd_recast, "render": cmd_render, "commit": cmd_commit, "rewrite": cmd_rewrite, "read-submit": cmd_read_submit, "status": cmd_status, "migrate": cmd_migrate, "shows": cmd_shows,
             "doctor": cmd_doctor}
 
 

@@ -4,10 +4,10 @@ the bible and cast sheet change only at `committed`.
     ingested -> drafted -> cast -> rendered -> encoded -> committed
 
 Screenshot imports add `copied -> read` before `ingested` (docs/design/any-group-chat.md).
-This release stops at `rendered` (beats.json, bible.next.json, cast.next.json
-and render/master.mp4 are written; the bible and cast sheet are not). Encode
-and commit arrive next. `chatcom recast` moves `cast` back to `drafted`;
-`chatcom rewrite` moves a drafted, cast or rendered episode back to `ingested`.
+`chatcom render` goes cast -> rendered (render/master.mp4) -> encoded
+(episode_NNN.mp4). The episode commits (bible.json and cast.json change) when
+the next episode is ingested, or on `chatcom commit`. Until then `chatcom
+recast` moves it back to `drafted` and `chatcom rewrite` back to `ingested`.
 
 Attempts: 3 submits per prep call, at most 3 prep cycles per episode. The
 data flow the operator accepted is recorded; a command with another flow
@@ -18,6 +18,7 @@ from chatcom.core.errors import ChatcomError
 
 STAGES = ("copied", "read", "ingested", "drafted", "cast", "rendered", "encoded", "committed")
 IMPORTING = ("copied", "read")
+UNCOMMITTED = ("drafted", "cast", "rendered", "encoded")   # recast and rewrite work here
 MAX_WRITER_ATTEMPTS = 3
 MAX_PREP_CYCLES = 3
 
@@ -58,23 +59,28 @@ def advance(state: dict, stage: str, now: str) -> dict:
     return {**state, "stage": stage, "updated": now}
 
 
+def _unencoded(state: dict) -> dict:
+    """The state without its encode record: the draft or the drawings changed."""
+    return {k: v for k, v in state.items() if k not in ("encoded", "stills")}
+
+
 def reopen_cast(state: dict, now: str) -> dict:
     """`chatcom recast`: the episode goes back to `drafted` until it is cast again."""
-    if state["stage"] not in ("drafted", "cast"):
+    if state["stage"] not in UNCOMMITTED:
         raise ChatcomError("CHATCOM_E_STATE", f"{state['episode']} is at stage '{state['stage']}'; recast works "
-                           "after the draft and before the render", "Recast with the next episode's draft.",
+                           "after the draft and before the commit", "Recast with the next episode's draft.",
                            context={"stage": state["stage"]})
-    return {**state, "stage": "drafted", "updated": now}
+    return {**_unencoded(state), "stage": "drafted", "updated": now}
 
 
-def reopen_draft(state: dict, now: str) -> dict:
+def reopen_draft(state: dict, now: str, *, also: tuple[str, ...] = ()) -> dict:
     """`chatcom rewrite`: the episode goes back to `ingested` with a fresh writer
     budget. Everything else in the state (data flow, window, paid-call counts) stays."""
-    if state["stage"] not in ("drafted", "cast", "rendered"):
+    if state["stage"] not in (*UNCOMMITTED, *also):
         raise ChatcomError("CHATCOM_E_STATE", f"{state['episode']} is at stage '{state['stage']}'; rewrite works "
-                           "after the draft and before the encode", "`chatcom status` prints the next command.",
+                           "after the draft and before the commit", "`chatcom status` prints the next command.",
                            context={"stage": state["stage"]})
-    return {**state, "stage": "ingested", "attempts": 0, "prep_cycles": 0, "last_errors": None,
+    return {**_unencoded(state), "stage": "ingested", "attempts": 0, "prep_cycles": 0, "last_errors": None,
             "writer_model": None, "updated": now}
 
 
@@ -136,6 +142,8 @@ def next_command(state: dict | None, slug: str) -> str:
         return f"chatcom cast {slug}"
     if stage == "cast":
         return f"chatcom render {slug}"
-    if stage == "rendered":
-        return "encode arrives with the next release; the master is in render/master.mp4"
+    if stage == "rendered":  # the encode stopped; the master is kept
+        return f"chatcom render {slug} --max-size <size>"
+    if stage == "encoded":
+        return f"chatcom commit {slug}"
     return f"chatcom status {slug}"

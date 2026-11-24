@@ -184,13 +184,13 @@ episode; then `CHATCOM_E_READER_GAVE_UP` or `CHATCOM_E_WRITER_GAVE_UP`, exit 4,
 | `read` | `read-submit`, last batch | `ingested` (automatic) |
 | `ingested` | `ingest` (any text source), or after `read` | `drafted` |
 | `drafted` | `write-submit` | `cast` |
-| `cast`, `rendered`, `encoded`, `committed` | casting, render, encode (Next Steps 3-4) | — |
+| `cast`, `rendered`, `encoded`, `committed` | casting, render, encode, then `commit` or the next episode's `ingest` (Next Steps 3-4) | — |
 
 `ingest --export transcript.txt` on an episode at `read` replaces the reader
 output. Any other `--export` on an episode at `copied` or `read` exits 2 with
 `CHATCOM_E_IMPORT_IN_PROGRESS` unless `--replace` is passed. `chatcom recast`
-moves an episode at `drafted` or `cast` back to `drafted` until the redraw
-finishes. The bible changes only at `committed`. `chatcom status <show>`
+moves an episode at `drafted`, `cast`, `rendered` or `encoded` back to `drafted`
+until the redraw finishes. The bible changes only at `committed`. `chatcom status <show>`
 prints the stage, attempt counts, the lock holder and the literal next command.
 
 ## Consent
@@ -265,6 +265,7 @@ on stdout and a notice as `{notice_text, data_flow, next_command}` on stdout.
 | `CHATCOM_E_READER_UNAVAILABLE` | 4 | 6 |
 | `CHATCOM_E_PAINTER_UNAVAILABLE` | 4 | 8 |
 | `CHATCOM_E_RENDER` | 5 | shipped |
+| `CHATCOM_E_SIZE_CAP` | 5 | shipped |
 <!-- /check_spec:codes -->
 
 `CHATCOM_W_WHOLE_IMPORT` is a warning, not an error: the run continues.
@@ -296,6 +297,8 @@ cleared automatically, so there is no unlock command.
 | `--member` | recast | the one member to draw again (6 calls); without it, the whole show | 8 |
 | `--photo` | new, recast | a reference photo: `NAME=PATH` on `new` (repeatable); a path for the `--member` on `recast` | 8 |
 | `--no-photo` | new, recast | cast from how they text: a name on `new` (repeatable); the `--member` on `recast` | 8 |
+| `--max-size` | render | the MP4 size cap (default 16MB); with a render kept, only the encode runs | shipped |
+| `--episode` | render, rewrite | a committed episode by number: render it again, or write the last committed one again | shipped |
 <!-- /check_spec:flags -->
 
 ## Tests that must exist

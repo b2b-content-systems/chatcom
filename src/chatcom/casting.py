@@ -242,7 +242,7 @@ def recast(show: store.Show, painter, *, member: str | None = None, photo: str |
     new file names (an episode already made keeps its pictures)."""
     with show.lock():
         code, st, ep, nxt_path, base = _episode(show)
-        if st["stage"] not in ("drafted", "cast"):
+        if st["stage"] not in state_ops.UNCOMMITTED:
             state_ops.reopen_cast(st, store.now())  # raises with the fix
         bible_next = store.read_json(ep / "bible.next.json")
         sheet = _reset(copy.deepcopy(base), bible_next["cast"], member, photo, no_photo)
@@ -265,6 +265,9 @@ def recast(show: store.Show, painter, *, member: str | None = None, photo: str |
         _photos(show, sheet, needed)  # a missing or unreadable photo stops here, before anything changes
         # state first: a stop between the two writes leaves `drafted` with the old, complete sheet
         store.write_json(show.state_path(code), state_ops.reopen_cast(st, store.now()))
+        if (ep / "render").is_dir():  # the master shows the old drawings; encoded MP4s stay
+            import shutil
+            shutil.rmtree(ep / "render")
         store.write_json(nxt_path, sheet)
         return _cast(show, painter, accepted=True, approve_calls=n, say=say)
 

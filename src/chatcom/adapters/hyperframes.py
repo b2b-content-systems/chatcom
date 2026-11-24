@@ -20,8 +20,11 @@ STOP_GRACE = 10         # seconds between TERM (HyperFrames closes its Chrome) a
 
 
 def duration(path: Path) -> float:
-    r = subprocess.run([tools.ffprobe(), "-v", "error", "-show_entries", "format=duration", "-of", "json", str(path)],
-                       capture_output=True, text=True, timeout=60, stdin=subprocess.DEVNULL)
+    try:
+        r = subprocess.run([tools.ffprobe(), "-v", "error", "-show_entries", "format=duration", "-of", "json",
+                            str(path)], capture_output=True, text=True, timeout=60, stdin=subprocess.DEVNULL)
+    except subprocess.TimeoutExpired:
+        return -1.0   # read as "not a usable video" by every caller
     try:
         return float(json.loads(r.stdout)["format"]["duration"])
     except (ValueError, KeyError, TypeError):

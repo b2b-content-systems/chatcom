@@ -670,20 +670,20 @@ def test_recast_refuses_unclear_requests(capsys, lake_show, tmp_path, beats_s01e
 # ---- recast coverage (added by the /ship coverage audit) -----------------------------------------
 
 def test_recast_never_reopens_an_episode_past_cast(capsys, lake_show, tmp_path, beats_s01e01, not_a_tty):
-    # Value: protects=recast refuses once an episode is rendered, and writes and pays nothing; fails_when=the stage
-    # guard goes and a rendered episode drops back to drafted; why_new=every recast test runs at drafted or cast;
-    # seam=none; no_claim=the render stage itself (stage set by hand in state.json)
+    # Value: protects=recast refuses once an episode is committed, and writes and pays nothing; fails_when=the stage
+    # guard goes and a committed episode drops back to drafted; why_new=every recast test runs at drafted or cast;
+    # seam=none; no_claim=recast before the commit (test_render_encode.py; stage set by hand in state.json)
     drafted(capsys, lake_show, tmp_path, beats_s01e01)
     sp = lake_show.state_path("S01E01")
     st = json.loads(sp.read_text("utf-8"))
-    st["stage"] = "rendered"
+    st["stage"] = "committed"
     sp.write_text(json.dumps(st), "utf-8")
     before = sp.read_bytes()
     painter = ReplayPainter()
     with pytest.raises(ChatcomError) as e:
         casting.recast(lake_show, painter, member="Mike", accepted=True, approve_calls=len(rules.POSES),
                        say=lambda m: None)
-    assert e.value.code == "CHATCOM_E_STATE" and e.value.context["stage"] == "rendered"
+    assert e.value.code == "CHATCOM_E_STATE" and e.value.context["stage"] == "committed"
     assert sp.read_bytes() == before and painter.calls == 0
     assert not (lake_show.episode_dir("S01E01") / "cast.next.json").exists()
 

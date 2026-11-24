@@ -420,7 +420,7 @@
             "type": "string"
           },
           "maxItems": 2,
-          "description": "First frames of scenes 1 and 3, relative to the show folder. Empty until the episode is rendered."
+          "description": "Frames 0.5 s into scenes 1 and 3, relative to the show folder. Empty until the episode is committed."
         },
         "writer": {
           "type": "object",

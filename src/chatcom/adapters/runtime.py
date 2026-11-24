@@ -91,12 +91,20 @@ def require(version: str = VERSION) -> Path:
     for name in BIG_FONTS:
         if not (fonts_dir(version) / name).is_file():
             raise _missing(f"font {name} is missing")
+    chrome = root(version) / "cache" / "chrome"
+    if not any(p.is_file() and os.access(p, os.X_OK) for p in chrome.glob("*/*/*/chrome-headless-shell*")):
+        raise _missing(f"its Chrome is missing from {chrome}")
     return binary(version)
 
 
 def node_version() -> int:
     exe = tools.node()
-    r = subprocess.run([exe, "--version"], capture_output=True, text=True, timeout=30)
+    try:
+        r = subprocess.run([exe, "--version"], capture_output=True, text=True, timeout=30, stdin=subprocess.DEVNULL)
+    except subprocess.TimeoutExpired:
+        raise ChatcomError("CHATCOM_E_PREFLIGHT", f"`{exe} --version` did not answer in 30 s",
+                           "Check that Node.js runs (`node --version` in a terminal), then retry.",
+                           recovery="retry", context={"node": exe}) from None
     try:
         major = int(r.stdout.strip().lstrip("v").split(".")[0])
     except ValueError:

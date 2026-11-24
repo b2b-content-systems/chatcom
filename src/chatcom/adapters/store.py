@@ -24,7 +24,7 @@ def now() -> str:
 
 
 def home() -> Path:
-    h = Path(os.environ.get("CHATCOM_HOME") or "~/.chatcom").expanduser()
+    h = Path(os.environ.get("CHATCOM_HOME") or "~/.chatcom").expanduser().absolute()   # children run elsewhere
     h.mkdir(parents=True, exist_ok=True)
     try:
         os.chmod(h, 0o700)
@@ -179,9 +179,17 @@ class Show:
         return {"pid": pid, "since": started} if pid and _alive(pid) else None
 
     def snapshot_bible(self, code: str) -> Path:
-        dst = self.dir / "snapshots" / f"bible.{code}.pre.json"
-        if self.bible_path.is_file() and not dst.exists():
-            write_atomic(dst, self.bible_path.read_bytes())
+        return self._snapshot(self.bible_path, f"bible.{code}.pre.json")
+
+    def snapshot_cast(self, code: str) -> Path:
+        return self._snapshot(self.cast_path, f"cast.{code}.pre.json")
+
+    def _snapshot(self, src: Path, name: str) -> Path:
+        """The file as it was before episode `code` committed. Written once: a
+        rerun of a stopped commit keeps the first copy."""
+        dst = self.dir / "snapshots" / name
+        if src.is_file() and not dst.exists():
+            write_atomic(dst, src.read_bytes())
         return dst
 
 
