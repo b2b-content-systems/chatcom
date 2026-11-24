@@ -846,3 +846,14 @@ def test_two_shows_start_from_different_people():
     first = lambda calls: next(c.prompt for c in calls if c.kind == "pose")
     assert first(one) != first(two)
     assert len({rules.look_hint((i + rules.show_offset("X", "anime")) % 256) for i in range(256)}) == 256
+
+
+# Value: protects=hair fits the writer's read, so a woman never starts from a buzz cut; fails_when=the hint ignores
+# `who` again; why_new=round 3 drew Coach Bea and Ruth as men; seam=none; no_claim=what the model draws
+def test_the_starting_hair_fits_the_writers_read():
+    for i in range(32):
+        assert rules.look_hint(i, "a woman in her 40s").split(",")[0] in rules.WOMEN_HAIR
+        assert rules.look_hint(i, "a man in his 60s").split(",")[0] in rules.MEN_HAIR
+        assert rules.look_hint(i, "an adult in their 30s") == rules.look_hint(i)
+    p = rules.pose_prompt("sitcom", member("A"), "neutral", from_photo=False, first=True, note="a woman in her 40s")
+    assert "never changes their gender or age" in p and not any(h in p for h in rules.MEN_HAIR if h not in rules.HAIR)

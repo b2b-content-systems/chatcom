@@ -57,6 +57,26 @@ EVERYDAY = ("an everyday middle-class American adult who could be anyone at a Ta
 # No greens: the chroma key took a forest-green top half out of the picture (measured, 2026-11-23).
 HAIR = ("short brown hair", "shoulder-length dark hair", "thinning hair cut short", "a blond ponytail",
         "short grey hair", "a dark-brown buzz cut", "wavy light-brown hair to the chin", "short black curly hair")
+# Hair that fits who they are: the third everyday run (2026-11-24) drew two women the writer read correctly as
+# men, because their hint gave them a buzz cut and thinning hair and the model followed the hair.
+WOMEN_HAIR = ("shoulder-length brown hair", "a blond ponytail", "short grey hair in a bob",
+              "wavy light-brown hair to the chin", "long dark hair in a low ponytail", "curly black hair to the shoulders",
+              "straight auburn hair tucked behind the ears", "greying hair pulled back in a clip")
+MEN_HAIR = ("short brown hair", "thinning hair cut short", "a dark-brown buzz cut", "short grey hair",
+            "short black curly hair", "a receding hairline and a short beard", "messy light-brown hair",
+            "short dark hair and a goatee")
+_WOMAN = re.compile(r"\b(woman|women|girl|grandmother|grandma|mother|mom|aunt|wife|lady|she|her)\b", re.I)
+_MAN = re.compile(r"\b(man|men|boy|grandfather|grandpa|father|dad|uncle|husband|guy|he|his)\b", re.I)
+
+
+def _hair_for(who: str | None) -> tuple[str, ...]:
+    if who and _WOMAN.search(who):
+        return WOMEN_HAIR
+    if who and _MAN.search(who):
+        return MEN_HAIR
+    return HAIR
+
+
 BUILD = ("average height and a little heavy-set", "medium build with a soft middle", "tall and broad",
          "short and sturdy")
 OUTFIT = ("a heather-grey crewneck sweatshirt and jeans", "a navy quarter-zip pullover and khakis",
@@ -72,11 +92,13 @@ def show_offset(title: str | None, look: str) -> int:
     return int(hashlib.sha256(f"{title or ''}|{look}".encode()).hexdigest()[:8], 16) % 256
 
 
-def look_hint(index: int) -> str:
+def look_hint(index: int, who: str | None = None) -> str:
     """Distinct for the first 256 members. The prompt never names a member, so two sparse members with the same
-    hint would get the same content key and share one drawing. Changing a hint redraws that member (cache keys)."""
-    h, b, o = len(HAIR), len(BUILD), len(OUTFIT)
-    return (f"{HAIR[index % h]}, {BUILD[(index * 3 + index // h) % b]}, wearing "
+    hint would get the same content key and share one drawing. Changing a hint redraws that member (cache keys).
+    `who` (gender and rough age) picks hair that fits them."""
+    hair = _hair_for(who)
+    h, b, o = len(hair), len(BUILD), len(OUTFIT)
+    return (f"{hair[index % h]}, {BUILD[(index * 3 + index // h) % b]}, wearing "
             f"{OUTFIT[(index * 5 + index // (h * b)) % o]}")
 
 
@@ -123,8 +145,9 @@ def pose_prompt(look: str, m: dict, pose: str, *, from_photo: bool, first: bool,
                + (f" Also: {note}." if note else ""))
     elif first and note:
         who = (f"An original character (not a real or famous person) who is {describe_member(m)}. They look like "
-               f"this: {note}. Anything that leaves out, take from: {look_hint(index)}. Give them a distinct face "
-               "that fits that personality.")
+               f"this: {note}. Anything that leaves out, take from: {look_hint(index, note)}; that starting look "
+               "adapts to them and never changes their gender or age. Give them a distinct face that fits that "
+               "personality.")
     elif first:
         who = (f"An original character (not a real or famous person) who is {describe_member(m)}. Start from "
                f"this look: {look_hint(index)}; give them a distinct face that fits that personality.")
