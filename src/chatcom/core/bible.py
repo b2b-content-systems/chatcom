@@ -15,9 +15,9 @@ from chatcom.core.schema import check
 LOOKS = ("sitcom", "anime", "cartoon80s", "truecrime", "cutscene", "facetime", "flipphone", "reality")
 POSES = ("neutral", "talking", "laughing", "typing", "facepalm", "shrug")
 STARTER_BACKGROUNDS = (
-    ("home_base", "The group's usual hangout, where the cast lives on screen."),
+    ("home_base", "The group's usual hangout: a suburban living room with a worn sectional, a TV and carpet."),
     ("chat_set", "The group chat as a TV set: a giant phone screen glowing behind the cast."),
-    ("outdoor", "An outdoor spot the group would plausibly meet at."),
+    ("outdoor", "A backyard patio behind a suburban house: a grill, plastic chairs, a wooden fence."),
 )
 MAX_TRAITS = 8
 SYNOPSES_IN_WINDOW = 5

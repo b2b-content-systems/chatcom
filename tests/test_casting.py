@@ -798,3 +798,15 @@ def test_a_recast_photo_path_is_stored_in_full(lake_show, tmp_path, beats_s01e01
                          approve_calls=len(rules.POSES), say=lambda m: None)
     mike = next(m for m in json.loads(Path(res["cast_next"]).read_text())["members"] if m["name"] == "Mike")
     assert Path(mike["photo"]).is_absolute() and mike["take_id"]
+
+
+# Value: protects=every cast member starts as an ordinary middle-class American (Bryan, 2026-11-24), never from a
+# costume hint; fails_when=the everyday guidance drops out of a first pose or a statement look comes back;
+# why_new=the first live run drew dyed-blue hair and lavender tops; seam=none; no_claim=what the model draws
+def test_every_first_pose_asks_for_an_everyday_american_adult():
+    for i in range(16):
+        p = rules.pose_prompt("sitcom", member("A"), "neutral", from_photo=False, first=True, index=i)
+        assert "middle-class American" in p and "no costume" in p
+    hints = " ".join(rules.look_hint(i) for i in range(256))
+    assert not any(w in hints for w in ("dyed", "blue hair", "red hair", "lavender", "mustard"))
+    assert "middle-class American" in rules.background_prompt("anime", "A park.")
