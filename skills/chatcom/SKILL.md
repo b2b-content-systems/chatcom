@@ -10,7 +10,7 @@ CHATCOM turns a group chat into a TV episode starring the people in it, in the s
 (sitcom, anime, 80s cartoon, true crime and more), and remembers running jokes from week to week.
 
 **Status: v0.1 is in development.** Today the engine reads a WhatsApp or Telegram export, a pasted chat or screenshots, and writes the episode's script
-(`beats.json`), the show's memory (the bible), casts the show and renders a silent 60-second master video. Sound and the file sized for the group chat are next. Say this plainly if the person expects a finished video, and show them the
+(`beats.json`), the show's memory (the bible), casts the show and renders a silent 60-second MP4 sized for the group chat. Sound is next. Say this plainly if the person expects a finished video, and show them the
 sample episodes: https://b2b-content-systems.github.io/chatcom/
 
 ## Rules that always apply
@@ -98,7 +98,11 @@ For screenshots (Signal, iMessage, Discord, any app), the export is the folder o
    `CHATCOM_E_PREFLIGHT` means the render runtime is missing: tell the person its `fix:` line (it names
    `chatcom doctor --install`, a one-time download of about 400 MB) and run it only after they agree. Exit 2 with
    `CHATCOM_E_BEATS_INVALID` on a draft from an older chatcom: tell the person, and after a yes run
-   `chatcom rewrite <show>`, then the command it prints. On success, give the person the `master` path.
+   `chatcom rewrite <show>`, then the command it prints. Exit 5 with `CHATCOM_E_SIZE_CAP` means the MP4 cannot
+   fit the cap (16 MB by default): tell the person the sizes, and ask for their group chat's limit before you run
+   `chatcom --json render <show> --max-size <size>` (only the encode runs again). On success, give the person the
+   `mp4` path: that is the file to send to the group. The episode joins the show's memory when the next episode
+   starts (or on `chatcom commit <show>`); until then `chatcom rewrite` and `chatcom recast` still work on it.
 
 If you lose track of where an episode stands, `chatcom status <show>` prints its stage and the next command.
 Any other error prints a code and a `fix:` line; tell the person what it says. Never work around an error.

@@ -125,6 +125,34 @@ What R2 shipped, and where it differs from the plan text above:
   CSP the listener sees 0 requests; without it, it sees some. So the test can fail. The CI job renders inside a
   network namespace with only loopback, after checking it cannot reach github.com.
 
+## R3 as built (2026-11-23)
+
+- **`chatcom render` goes cast -> rendered -> encoded in one run.** The encode is one CRF 23 H.264 encode; only
+  over the cap, two-pass at a bitrate for the cap, then 15% lower, 3 tries at most, then `CHATCOM_E_SIZE_CAP`
+  (exit 5, a new code) with each try's size. Each encode writes the next `episodes/<code>/episode_NNN.mp4`; a
+  missed cap keeps nothing and keeps the master at `rendered`. The last stdout line is the MP4 path.
+- **When a kept master is only encoded:** at `rendered` (the encode stopped), or when `--max-size` is given. Plain
+  `chatcom render` at `encoded` renders again, for a chatcom upgrade with a new look.
+- **Stills (D15):** `episodes/<code>/stills/scene_1.jpg` and `scene_3.jpg`, 0.5 s into each scene, taken from the
+  master at encode and written into the log entry at commit. The composer only uses `.jpg`, `.jpeg`, `.png` or
+  `.webp` as a still's name in the page.
+- **Commit (O12 answer B):** at `encoded`, `chatcom commit <show>`, or `chatcom ingest`/`episode` for the next
+  episode, which commits the waiting one first and says so. Order under the show lock: snapshots
+  `bible.<code>.pre.json` and `cast.<code>.pre.json` (written once), `cast.json`, `bible.json` (the done marker),
+  the state. A stop after `bible.json` is finished by the next commit or ingest.
+- **`render --episode N`** makes a new MP4 of a committed episode from its own folder; its stage and the bible stay.
+- **`rewrite --episode N`** works on the last committed episode only, and only before the next episode is
+  ingested: it puts both snapshots back, then the episode is at `ingested`.
+- **`chatcom episode` does not render at the end** (O5 as planned): it stops at `drafted`, because `chatcom cast`
+  needs its own approval for the paid image calls. `status` names `chatcom render` at `cast`.
+- **R2 review notes settled:** recast works up to the commit (back to `drafted`; `render/` goes, the MP4s stay);
+  rewrite writes its state before it deletes; rewrite drops the sets the draft added from `cast.next.json`, so a
+  reused set id is drawn again (the image cache keeps a same-description redraw free); a relative `CHATCOM_HOME` is
+  made absolute; preflight checks the runtime's Chrome; `node --version` and ffprobe time-outs are coded errors; the
+  CI scope step runs the render when its diff fails and watches more files.
+- **Still open (TODOS.md):** an env allowlist for the render children, a lock on the shared runtime folder, the
+  detached Chrome after a SIGKILL, and a lifetime writer-call count across rewrites.
+
 ## Review record
 
 Target: `docs/design/render.md` (this plan). Review: /plan-eng-review, 2026-11-23, engineering only (CEO, design and
@@ -640,8 +668,13 @@ Spike it in R2 and bring the result back; nothing changes until then.
 D) Defer this
 Leave the plan as is for now and record the proposal in TODOS.md.
 
-State: pending (investigate)
-Actual answer: C) Investigate first (D13, 2026-11-23)
+State: approved
+Actual answer: A) Apply: commit later (D13 brought back before R3, answered 2026-11-24; first answer C, investigate)
+Evidence: the next episode's code comes from bible.json, so episode 2 cannot start before episode 1 commits under
+either flow; `ingest` today refuses an episode past `ingested`; after a commit, a bad frame needs the snapshot restore.
+Accepted scope: `chatcom render` stops at `encoded` and prints the MP4 path. The episode commits when the next one
+starts (`chatcom episode` or `chatcom ingest` commits a waiting `encoded` episode first) or on `chatcom commit <show>`.
+Until then `recast`, `rewrite` and a re-render still work. `chatcom posted` stays v0.2.
 Accepted scope: investigation only: before R3 builds the commit step, try both flows (commit at encode vs commit when the next episode starts or on `chatcom posted`) on a rendered fixture episode and bring the result back as a new question. Until then the plan's baseline (commit after encode) stays unchanged and the remedy stays pending. No implementation approved.
 History: none
 
@@ -827,7 +860,7 @@ Codex; checkbox as you ship.
   - Verify: both ledger rows answered
 
 ### Unresolved decisions that may bite you later
-- O12 (D13): when the episode commits — investigate before R3 builds the commit step.
+- O12 (D13): answered before R3: commit later (next episode start or `chatcom commit`).
 - O15 (D15): answered after the R2 evidence: stills 0.5 s into scenes 1 and 3, kept under `episodes/<code>/stills/` (R3).
 
 ### Completion summary

@@ -9,8 +9,7 @@ the running jokes.
 
 **Current status: v0.1 is in development.** Today CHATCOM reads the chat, writes the episode's script
 (`beats.json`) and the show's memory, casts the show (each member in 6 poses, and the sets), and renders the
-60-second master video on your computer. Sound, the size-capped file for the group chat and the commit come
-next. The sample episodes on the site
+60-second MP4 for the group chat on your computer (16 MB or less by default). Sound comes next. The sample episodes on the site
 were made with the same pipeline.
 
 <p align="center"><img src=".github/assets/demo.gif" alt="One group chat becomes an episode in several styles" width="640"></p>
@@ -119,14 +118,20 @@ how many it made (`calls_billed`). The limits:
 | `chatcom read-prep`, `read-submit` | The skill's screenshot-reading steps |
 | `chatcom cast <show>` | Draw the cast (6 poses each) and the sets for this episode |
 | `chatcom recast <show> [--member NAME]` | Draw one member again (6 calls; `--photo PATH` or `--no-photo`), or the whole show |
-| `chatcom render <show>` | Turn the cast episode into the 60-second master video (no keys, no network) |
-| `chatcom rewrite <show>` | Send this week's episode back to the writer; keeps the messages, transcript and drawings |
+| `chatcom render <show> [--max-size 16MB]` | Turn the cast episode into the 60-second MP4 for the group (no keys, no network); the last line is the file to send |
+| `chatcom render <show> --episode N` | Make a new MP4 of a committed episode |
+| `chatcom commit <show>` | Add the encoded episode to the show's memory now (starting the next episode does it too) |
+| `chatcom rewrite <show> [--episode N]` | Send this week's episode, or the last committed one, back to the writer; keeps the messages, transcript and drawings |
 | `chatcom status <show>` | Where the episode stands, and the next command |
 | `chatcom migrate <show>` | Upgrade a show made by an older version (backs it up first) |
 | `chatcom shows`, `chatcom doctor [--install]` | List shows; check this computer (`--install`: the render runtime) |
 
 An episode moves through `copied` → `read` → `ingested` → `drafted` → `cast` → `rendered` → `encoded` →
-`committed`. This release stops at `rendered`. The show's memory changes only at `committed`.
+`committed`. The show's memory (`bible.json` and `cast.json`) changes only at `committed`, which happens when you
+start the next episode or run `chatcom commit`. Until then `chatcom rewrite` and `chatcom recast` still work on the
+episode. Each encode writes a new numbered file (`episode_001.mp4`, `episode_002.mp4`, ...) and keeps the old ones.
+If the MP4 cannot fit the cap, the render is kept and `chatcom render <show> --max-size <size>` runs only the
+encode.
 
 ## Remove a show
 
