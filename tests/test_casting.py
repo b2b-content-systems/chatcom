@@ -857,3 +857,15 @@ def test_the_starting_hair_fits_the_writers_read():
         assert rules.look_hint(i, "an adult in their 30s") == rules.look_hint(i)
     p = rules.pose_prompt("sitcom", member("A"), "neutral", from_photo=False, first=True, note="a woman in her 40s")
     assert "never changes their gender or age" in p and not any(h in p for h in rules.MEN_HAIR if h not in rules.HAIR)
+
+
+# Value: protects=a note that names a relative keeps the person's own gender; fails_when=any gender word anywhere
+# picks the hair again; why_new=ship review p1 (casting.py:72) showed "his wife" gave a man women's hair; seam=none;
+# no_claim=notes whose first gender word is not the person
+def test_hair_follows_the_person_not_a_relative_in_the_note():
+    for i in range(16):
+        for note in ("tall guy, his wife calls him Bear", "a man in his 50s, married to her sister",
+                     "a dad who wears his mother's ring"):
+            assert rules.look_hint(i, note).split(",")[0] in rules.MEN_HAIR, note
+        for note in ("a woman in her 40s, his old coach", "a grandmother who calls her son every day"):
+            assert rules.look_hint(i, note).split(",")[0] in rules.WOMEN_HAIR, note

@@ -70,9 +70,13 @@ _MAN = re.compile(r"\b(man|men|boy|grandfather|grandpa|father|dad|uncle|husband|
 
 
 def _hair_for(who: str | None) -> tuple[str, ...]:
-    if who and _WOMAN.search(who):
+    # The first gender word names the person; a later one is usually a relative ("a man in his 50s, married to
+    # her sister", "tall guy, his wife calls him Bear"), so the earliest match decides (the ship review, 2026-11-25).
+    woman = _WOMAN.search(who or "")
+    man = _MAN.search(who or "")
+    if woman and (not man or woman.start() < man.start()):
         return WOMEN_HAIR
-    if who and _MAN.search(who):
+    if man:
         return MEN_HAIR
     return HAIR
 
