@@ -170,6 +170,14 @@
           ],
           "maxLength": 160
         },
+        "looks": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 80,
+          "description": "How they come across, gender and rough age only ('a woman in her 40s'), from the writer's first read of the chat. The operator's setup.json `looks` note wins over it."
+        },
         "source": {
           "enum": [
             "photo",

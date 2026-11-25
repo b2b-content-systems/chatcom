@@ -41,22 +41,69 @@ POSE_TEXT = {
 }
 
 
+# Everyone is drawn as an ordinary middle-class American (Bryan, 2026-11-24: "your every day average joe's"):
+# real proportions, the clothes people actually wear and buy, nothing that reads as a costume. Sources: CDC NHANES
+# 2021-23 (the average adult man is about 5'9" and 199 lb, the average woman about 5'3" and 172 lb), CivicScience
+# (57% wear jeans regularly), Verasight 2025 (80% wear a T-shirt weekly), Tinuiti 2025 (Walmart, Target, Amazon,
+# then Old Navy and Costco sell most clothes), Pew 2024 (about half of Americans live in middle-income homes).
+EVERYDAY = ("an everyday middle-class American adult who could be anyone at a Target or a kid's soccer game: an "
+            "ordinary, friendly face with real-life skin and features, a realistic everyday body (most American adults "
+            "are heavier and less toned than TV characters), plain big-box-store clothes, no glamour, no costume, no "
+            "statement hair colours or accessories; their age fits who they are in the group (a grandmother looks like "
+            "a grandmother, a dad looks like a dad)")
+
 # A starting look for each member cast from how they text, so no two begin alike (two sparse members came out
 # as near twins in the first live run, 2026-11-23). Index i picks a different combination for every member.
 # No greens: the chroma key took a forest-green top half out of the picture (measured, 2026-11-23).
-HAIR = ("short black hair", "long red hair", "a shaved head", "curly blond hair", "a grey ponytail",
-        "a brown buzz cut", "wavy dark-brown hair", "dyed blue hair")
-BUILD = ("tall and lanky", "short and stocky", "average height, broad shoulders", "small and wiry")
-OUTFIT = ("a mustard-yellow", "a navy-blue", "a coral", "a burgundy", "a sky-blue", "a charcoal", "an orange",
-          "a lavender")
+HAIR = ("short brown hair", "shoulder-length dark hair", "thinning hair cut short", "a blond ponytail",
+        "short grey hair", "a dark-brown buzz cut", "wavy light-brown hair to the chin", "short black curly hair")
+# Hair that fits who they are: the third everyday run (2026-11-24) drew two women the writer read correctly as
+# men, because their hint gave them a buzz cut and thinning hair and the model followed the hair.
+WOMEN_HAIR = ("shoulder-length brown hair", "a blond ponytail", "short grey hair in a bob",
+              "wavy light-brown hair to the chin", "long dark hair in a low ponytail", "curly black hair to the shoulders",
+              "straight auburn hair tucked behind the ears", "greying hair pulled back in a clip")
+MEN_HAIR = ("short brown hair", "thinning hair cut short", "a dark-brown buzz cut", "short grey hair",
+            "short black curly hair", "a receding hairline and a short beard", "messy light-brown hair",
+            "short dark hair and a goatee")
+_WOMAN = re.compile(r"\b(woman|women|girl|grandmother|grandma|mother|mom|aunt|wife|lady|she|her)\b", re.I)
+_MAN = re.compile(r"\b(man|men|boy|grandfather|grandpa|father|dad|uncle|husband|guy|he|his)\b", re.I)
 
 
-def look_hint(index: int) -> str:
+def _hair_for(who: str | None) -> tuple[str, ...]:
+    # The first gender word names the person; a later one is usually a relative ("a man in his 50s, married to
+    # her sister", "tall guy, his wife calls him Bear"), so the earliest match decides (the ship review, 2026-11-25).
+    woman = _WOMAN.search(who or "")
+    man = _MAN.search(who or "")
+    if woman and (not man or woman.start() < man.start()):
+        return WOMEN_HAIR
+    if man:
+        return MEN_HAIR
+    return HAIR
+
+
+BUILD = ("average height and a little heavy-set", "medium build with a soft middle", "tall and broad",
+         "short and sturdy")
+OUTFIT = ("a heather-grey crewneck sweatshirt and jeans", "a navy quarter-zip pullover and khakis",
+          "a plain white T-shirt under an open plaid flannel shirt and jeans",
+          "a black zip hoodie, joggers and white sneakers", "a maroon long-sleeve T-shirt and jeans",
+          "a light-blue button-down shirt with rolled sleeves and khakis", "a fleece vest over a grey long-sleeve tee",
+          "a faded college-logo T-shirt and athletic shorts")
+
+
+def show_offset(title: str | None, look: str) -> int:
+    """Where a show starts in the list of starting looks, so two shows never share a cast (the first everyday run,
+    2026-11-24, drew the same four people in three shows). Stable for a show; members stay distinct."""
+    return int(hashlib.sha256(f"{title or ''}|{look}".encode()).hexdigest()[:8], 16) % 256
+
+
+def look_hint(index: int, who: str | None = None) -> str:
     """Distinct for the first 256 members. The prompt never names a member, so two sparse members with the same
-    hint would get the same content key and share one drawing. Changing a hint redraws that member (cache keys)."""
-    h, b, o = len(HAIR), len(BUILD), len(OUTFIT)
-    return (f"{HAIR[index % h]}, {BUILD[(index * 3 + index // h) % b]}, wearing "
-            f"{OUTFIT[(index * 5 + index // (h * b)) % o]} top")
+    hint would get the same content key and share one drawing. Changing a hint redraws that member (cache keys).
+    `who` (gender and rough age) picks hair that fits them."""
+    hair = _hair_for(who)
+    h, b, o = len(hair), len(BUILD), len(OUTFIT)
+    return (f"{hair[index % h]}, {BUILD[(index * 3 + index // h) % b]}, wearing "
+            f"{OUTFIT[(index * 5 + index // (h * b)) % o]}")
 
 
 @dataclass
@@ -73,7 +120,9 @@ class Call:
 
 def style_prompt(look: str, title: str | None) -> str:
     return (f"A style reference frame for an animated TV show{f' called {title}' if title else ''}: "
-            f"{LOOK_STYLE[look]}. An empty, inviting living-room set with no people and no text. "
+            f"{LOOK_STYLE[look]}, with grounded, everyday proportions and faces. An ordinary middle-class American "
+            "living room with no people and no text: a sectional sofa, a TV on a stand, carpet, a floor lamp, family "
+            "photos, a little everyday clutter. "
             "This frame sets the palette, lighting and rendering for every later image.")
 
 
@@ -81,12 +130,12 @@ def describe_member(m: dict) -> str:
     """What the image model is told about someone cast from how they text."""
     bits = []
     if m.get("role"):
-        bits.append(f"known in the group as {m['role']}")
+        bits.append(f"known in the group as \"{m['role']}\" (a nickname, not a costume)")
     if m.get("traits"):
         bits.append("personality: " + "; ".join(m["traits"][:4]))
     if m.get("texting_voice"):
         bits.append(f"texts like this: {m['texting_voice']}")
-    return ", ".join(bits) or "an easy-going member of a friend group"
+    return ", ".join(bits + [EVERYDAY]) if bits else "an easy-going member of a friend group, " + EVERYDAY
 
 
 def pose_prompt(look: str, m: dict, pose: str, *, from_photo: bool, first: bool, index: int = 0,
@@ -96,31 +145,34 @@ def pose_prompt(look: str, m: dict, pose: str, *, from_photo: bool, first: bool,
     style = LOOK_STYLE[look]
     if first and from_photo:
         who = ("The person in the reference photo, redrawn as a character in this show. Keep their recognisable "
-               "features, hair and build; change the clothes to everyday clothes that suit them."
+               "features, hair and build; change the clothes to plain everyday clothes that suit them."
                + (f" Also: {note}." if note else ""))
     elif first and note:
         who = (f"An original character (not a real or famous person) who is {describe_member(m)}. They look like "
-               f"this: {note}. Anything that leaves out, take from: {look_hint(index)}. Give them a distinct face "
-               "that fits that personality.")
+               f"this: {note}. Anything that leaves out, take from: {look_hint(index, note)}; that starting look "
+               "adapts to them and never changes their gender or age. Give them a distinct face that fits that "
+               "personality.")
     elif first:
         who = (f"An original character (not a real or famous person) who is {describe_member(m)}. Start from "
                f"this look: {look_hint(index)}; give them a distinct face that fits that personality.")
     else:
         who = "The same character as in the character reference: same face, hair, build and outfit."
-    return (f"{who} Pose: {POSE_TEXT[pose]}. Full body, centred, {style}, matching the style reference. "
+    return (f"{who} Pose: {POSE_TEXT[pose]}. Full body, centred, {style}, matching the style reference, with "
+            "grounded everyday proportions. "
             f"On {GREEN}. Nothing green on the character. No text, no logo, no other people.")
 
 
 def background_prompt(look: str, description: str) -> str:
-    return (f"A background set for an animated TV show: {description} {LOOK_STYLE[look]}, matching the style "
-            "reference. Wide shot, no people, no text, room in the lower half for characters to stand.")
+    return (f"A background set for an animated TV show: {description} It is an ordinary middle-class American "
+            f"place, lived in and unglamorous. {LOOK_STYLE[look]}, matching the style reference. Wide shot, no people, "
+            "no text, room in the lower half for characters to stand.")
 
 
 def plan(sheet: dict, members: list[dict], look: str, title: str | None,
          new_locations: list[dict] | None = None, looks: dict[str, str] | None = None) -> list[Call]:
     """Every image this show still needs, in the order they must be made.
     `members` are bible cast entries (with role and traits); `sheet` is cast.json; `looks` maps a member's name
-    to the operator's appearance note."""
+    to how they look (the operator's note, else the writer's gender and rough age)."""
     calls: list[Call] = []
     if not sheet.get("style_sheet"):
         calls.append(Call("style", style_prompt(look, title), aspect="16:9", take=sheet.get("take_id", "")))
@@ -136,8 +188,8 @@ def plan(sheet: dict, members: list[dict], look: str, title: str | None,
             refs = ["style"] + ([f"photo:{m['name']}"] if first and from_photo else [] if first
                                 else [f"pose:{m['name']}:neutral"])
             note = (looks or {}).get(m["name"])
-            calls.append(Call("pose", pose_prompt(look, m, pose, from_photo=from_photo, first=first, index=index,
-                                                  note=note),
+            calls.append(Call("pose", pose_prompt(look, m, pose, from_photo=from_photo, first=first,
+                                                  index=(index + show_offset(title, look)) % 256, note=note),
                               member=m["name"], pose=pose, refs=refs, take=entry.get("take_id", "") if first else ""))
     for b in sheet["backgrounds"]:
         if not b.get("file"):

@@ -59,6 +59,13 @@ that the chat does not support.
 - **Cast:** give every cast member a credit role from how they text (at most
   32 characters, "The 2 AM Philosopher", "Only Sends 'k'"). Keep last
   week's role unless this week clearly earned a new one. Add traits sparingly.
+- **Looks:** for every cast member the bible has no `looks` for yet, add
+  `looks` to their `bible_update.cast` entry: how they come across, as gender
+  and rough age only, in plain words ("a woman in her 40s", "a grandmother in
+  her 70s", "a man in his 20s"). Take it from the chat: their name, what the
+  others call them, what they say about themselves. Never ethnicity, body,
+  looks or anything else; the artist draws them as ordinary people from that
+  line. Leave it out once the bible has one.
 
 ## A quiet week: the bottle episode
 
@@ -104,7 +111,7 @@ did not have.
   "tv_guide": "The trip is off. Again. Ava has a spreadsheet.",
   "synopsis": "Ava booked flights; nobody else did.",
   "bible_update": {
-    "cast": [{"name": "Ava", "role": "The Spreadsheet", "traits_add": ["books before anyone agrees"]}],
+    "cast": [{"name": "Ava", "role": "The Spreadsheet", "traits_add": ["books before anyone agrees"], "looks": "a woman in her 30s"}],
     "jokes_new": ["Ava's spreadsheet has a tab for every trip that never happened"],
     "callbacks": ["j1"],
     "storylines_new": ["Will the March trip happen at all"],

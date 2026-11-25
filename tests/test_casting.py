@@ -798,3 +798,74 @@ def test_a_recast_photo_path_is_stored_in_full(lake_show, tmp_path, beats_s01e01
                          approve_calls=len(rules.POSES), say=lambda m: None)
     mike = next(m for m in json.loads(Path(res["cast_next"]).read_text())["members"] if m["name"] == "Mike")
     assert Path(mike["photo"]).is_absolute() and mike["take_id"]
+
+
+# Value: protects=every cast member starts as an ordinary middle-class American (Bryan, 2026-11-24), never from a
+# costume hint; fails_when=the everyday guidance drops out of a first pose or a statement look comes back;
+# why_new=the first live run drew dyed-blue hair and lavender tops; seam=none; no_claim=what the model draws
+def test_every_first_pose_asks_for_an_everyday_american_adult():
+    for i in range(16):
+        p = rules.pose_prompt("sitcom", member("A"), "neutral", from_photo=False, first=True, index=i)
+        assert "middle-class American" in p and "no costume" in p
+    hints = " ".join(rules.look_hint(i) for i in range(256))
+    assert not any(w in hints for w in ("dyed", "blue hair", "red hair", "lavender", "mustard"))
+    assert "middle-class American" in rules.background_prompt("anime", "A park.")
+
+
+# Value: protects=a member is drawn as the gender and age the writer read from the chat, unless the operator's note
+# says otherwise, and two shows never start from the same people; fails_when=the writer's looks never reach the
+# prompt, the operator note stops winning, or the offset is dropped; why_new=the everyday run drew Lucía, Coach Bea,
+# Ruth and Gwen as men and the same four people in three shows (2026-11-24); seam=none; no_claim=what the model draws
+def test_the_writers_looks_reach_the_prompt_and_the_operator_note_wins(lake_show, beats_s01e01):
+    import copy
+    from chatcom.core import bible as bible_ops
+    bible = json.loads(lake_show.bible_path.read_text("utf-8"))
+    a, b = bible["cast"][0]["name"], bible["cast"][1]["name"]
+    beats = copy.deepcopy(beats_s01e01)
+    beats["bible_update"]["cast"] = [{"name": a, "looks": "a woman in her 40s"}, {"name": b, "looks": "a man in his 60s"}]
+    from test_window_bible import WIN, WRITER
+    kw = {"window_entry": WIN, "writer": WRITER}
+    out = bible_ops.apply_beats(bible, beats, **kw)
+    assert {m["name"]: m.get("looks") for m in out["cast"]}[a] == "a woman in her 40s"
+    later = copy.deepcopy(beats)
+    later["episode"] = bible_ops.current_code(out)
+    later["bible_update"]["cast"] = [{"name": a, "looks": "a man in his 20s"}]
+    again = bible_ops.apply_beats(out, later, **kw)
+    assert {m["name"]: m.get("looks") for m in again["cast"]}[a] == "a woman in her 40s"   # set once
+    setup = json.loads(lake_show.setup_path.read_text("utf-8")) if lake_show.setup_path.exists() else {}
+    lake_show.setup_path.write_text(json.dumps({**setup, "looks": {b: "a woman in her 50s"}}), "utf-8")
+    looks = casting.looks_for(lake_show, out["cast"])
+    assert looks[a] == "a woman in her 40s" and looks[b] == "a woman in her 50s"   # the operator note wins
+    prompt = rules.pose_prompt("sitcom", out["cast"][0], "neutral", from_photo=False, first=True, note=looks[a])
+    assert "a woman in her 40s" in prompt
+
+
+def test_two_shows_start_from_different_people():
+    one = rules.plan({"members": [], "backgrounds": []}, [member("A")], "sitcom", "THE ORTEGAS")
+    two = rules.plan({"members": [], "backgrounds": []}, [member("A")], "sitcom", "PAGE TURNERS")
+    first = lambda calls: next(c.prompt for c in calls if c.kind == "pose")
+    assert first(one) != first(two)
+    assert len({rules.look_hint((i + rules.show_offset("X", "anime")) % 256) for i in range(256)}) == 256
+
+
+# Value: protects=hair fits the writer's read, so a woman never starts from a buzz cut; fails_when=the hint ignores
+# `who` again; why_new=round 3 drew Coach Bea and Ruth as men; seam=none; no_claim=what the model draws
+def test_the_starting_hair_fits_the_writers_read():
+    for i in range(32):
+        assert rules.look_hint(i, "a woman in her 40s").split(",")[0] in rules.WOMEN_HAIR
+        assert rules.look_hint(i, "a man in his 60s").split(",")[0] in rules.MEN_HAIR
+        assert rules.look_hint(i, "an adult in their 30s") == rules.look_hint(i)
+    p = rules.pose_prompt("sitcom", member("A"), "neutral", from_photo=False, first=True, note="a woman in her 40s")
+    assert "never changes their gender or age" in p and not any(h in p for h in rules.MEN_HAIR if h not in rules.HAIR)
+
+
+# Value: protects=a note that names a relative keeps the person's own gender; fails_when=any gender word anywhere
+# picks the hair again; why_new=ship review p1 (casting.py:72) showed "his wife" gave a man women's hair; seam=none;
+# no_claim=notes whose first gender word is not the person
+def test_hair_follows_the_person_not_a_relative_in_the_note():
+    for i in range(16):
+        for note in ("tall guy, his wife calls him Bear", "a man in his 50s, married to her sister",
+                     "a dad who wears his mother's ring"):
+            assert rules.look_hint(i, note).split(",")[0] in rules.MEN_HAIR, note
+        for note in ("a woman in her 40s, his old coach", "a grandmother who calls her son every day"):
+            assert rules.look_hint(i, note).split(",")[0] in rules.WOMEN_HAIR, note
