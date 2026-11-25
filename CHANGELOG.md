@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.1.0.dev12 (unreleased)
+
+The cast now looks like the people in an ordinary American group chat.
+
+### Changed
+- Every member is drawn as an everyday middle-class American adult: real-life proportions, plain big-box-store
+  clothes, no glamour and no costume. Two of the three starting sets are now a suburban living room and a backyard
+  patio.
+- The writer now adds a short `looks` line for each new member, for example "a woman in her 40s", read from their
+  name, what others call them and what they say about themselves. It is set once. A note in `setup.json` still wins.
+- The starting hair fits that line, so a woman no longer starts from a buzz cut. A relative named in a note (for
+  example "his wife") does not decide it.
+- Each show starts from its own place in the list of starting looks, so two shows no longer share the same people.
+
 ## 0.1.0.dev11 (unreleased)
 
 Next Step 4, part 3: the MP4 for the group, and the commit.
